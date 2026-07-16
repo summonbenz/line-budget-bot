@@ -1,0 +1,12 @@
+{
+  "name": "line-budget-bot",
+  "version": "1.0.0",
+  "description": "โครงสร้าง: Caddy (reverse proxy + TLS) → line-bot (Node.js) → actual-server (Actual Budget) รายละเอียดสถาปัตยกรรมดูจาก diagram ที่คุยกันไว้ก่อนหน้า",
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}

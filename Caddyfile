@@ -1,0 +1,41 @@
+{$DOMAIN} {
+	encode gzip
+
+	# Line webhook - จุดเดียวที่ Line จะยิงมา
+	handle /webhook* {
+		reverse_proxy line-bot:3000
+	}
+
+	# API สำหรับ LIFF dashboard - ตรวจ auth เองอยู่แล้วใน line-bot (bot/src/auth.js)
+	handle /api/* {
+		reverse_proxy line-bot:3000
+	}
+
+	# LIFF web dashboard - static site, เปิดจากในแอป Line ผ่าน liff.line.me/{liffId}
+	handle /app/* {
+		uri strip_prefix /app
+		root * /srv/liff-web
+		file_server
+	}
+
+	# หน้าเว็บ Actual Budget - ใช้ตอน setup ครั้งแรก / ดู budget ผ่านเบราว์เซอร์
+	# ควรใส่ basicauth ป้องกันไว้ด้วย (ดูตัวอย่างด้านล่าง) เพราะเป็นข้อมูลการเงิน
+	handle /actual* {
+		reverse_proxy actual-server:5006
+	}
+
+	handle {
+		respond "ok" 200
+	}
+}
+
+# ตัวอย่างการใส่ basicauth กัน /actual (แนะนำให้เปิดใช้จริง):
+# {$DOMAIN} {
+# 	handle /actual* {
+# 		basicauth {
+# 			admin JDJhJDE0JGV4YW1wbGVoYXNoZXhhbXBsZQ==
+# 		}
+# 		reverse_proxy actual-server:5006
+# 	}
+# }
+# สร้าง hash ด้วยคำสั่ง: docker run --rm caddy caddy hash-password --plaintext 'your-password'

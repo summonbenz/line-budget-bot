@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>สรุปการเงิน</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+  <h1>สรุปการเงินของฉัน</h1>
+
+  <div id="status" class="status"></div>
+
+  <section>
+    <h2>ยอดคงเหลือแต่ละบัญชี</h2>
+    <div id="summary-cards" class="cards"></div>
+  </section>
+
+  <section>
+    <h2>หนี้รวมรายเดือน (cashflow)</h2>
+    <canvas id="cashflow-chart" height="220"></canvas>
+  </section>
+
+  <section>
+    <h2>รายการล่าสุด</h2>
+    <ul id="transaction-list" class="tx-list"></ul>
+  </section>
+</div>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

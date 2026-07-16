@@ -1,0 +1,51 @@
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./liff-web/build:/srv/liff-web:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    env_file:
+      - .env
+    mem_limit: 96m
+    networks:
+      - app
+
+  line-bot:
+    build: ./bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - ACTUAL_SERVER_URL=http://actual-server:5006
+    volumes:
+      - bot_data:/app/data
+    mem_limit: 320m
+    depends_on:
+      - actual-server
+    networks:
+      - app
+
+  actual-server:
+    image: actualbudget/actual-server:latest
+    restart: unless-stopped
+    volumes:
+      - actual_data:/data
+    mem_limit: 350m
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  bot_data:
+  actual_data:
