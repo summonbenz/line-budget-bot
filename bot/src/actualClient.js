@@ -1,13 +1,16 @@
 // wrapper คุยกับ actual-server ผ่าน @actual-app/api (internal docker network)
 
 const actualApi = require('@actual-app/api');
+const fs = require('fs');
 
 let ready = false;
 
 async function init() {
   if (ready) return;
+  const dataDir = '/app/data/actual-cache';
+  fs.mkdirSync(dataDir, { recursive: true }); // actualApi.init() ไม่สร้าง dir ให้เอง ต้องมีอยู่ก่อน
   await actualApi.init({
-    dataDir: '/app/data/actual-cache', // ต้องอยู่ใน volume ที่ persist กัน re-download ทุกครั้งที่ restart
+    dataDir, // ต้องอยู่ใน volume ที่ persist กัน re-download ทุกครั้งที่ restart
     serverURL: process.env.ACTUAL_SERVER_URL,
     password: process.env.ACTUAL_SERVER_PASSWORD,
   });
