@@ -44,6 +44,7 @@ async function addTransactions(accountId, txs) {
       payee_name: t.payee,
       category: t.category,
       notes: t.notes,
+      cleared: false,
     }))
   );
 }
