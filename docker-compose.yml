@@ -1,5 +1,5 @@
 services:
-  caddy:
+  chiyu:
     image: caddy:2-alpine
     restart: unless-stopped
     ports:
@@ -8,8 +8,8 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./liff-web/build:/srv/liff-web:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - chiyu_data:/data
+      - chiyu_config:/config
     env_file:
       - .env
     mem_limit: 96m
@@ -45,7 +45,7 @@ networks:
     driver: bridge
 
 volumes:
-  caddy_data:
-  caddy_config:
+  chiyu_data:
+  chiyu_config:
   bot_data:
   actual_data:

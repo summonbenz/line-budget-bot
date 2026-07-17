@@ -13,7 +13,7 @@ export default defineConfig({
 					filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 
-			// เสิร์ฟผ่าน Caddy เป็น static file ตรงๆ (ดู ../Caddyfile และ ../docker-compose.yml)
+			// เสิร์ฟผ่าน Chiyu เป็น static file ตรงๆ (ดู ../Caddyfile และ ../docker-compose.yml)
 			// ssr ปิดไว้ทั้งแอปใน src/routes/+layout.ts เลยใช้ fallback แบบ SPA แทนการ prerender
 			adapter: adapter({
 				pages: 'build',

@@ -1,12 +1,12 @@
 # Line budget bot — deploy บน DigitalOcean droplet (1 vCPU / 1GB RAM)
 
-โครงสร้าง: Caddy (reverse proxy + TLS) → line-bot (Node.js) → actual-server (Actual Budget)
+โครงสร้าง: Chiyu (reverse proxy + TLS) → line-bot (Node.js) → actual-server (Actual Budget)
 รายละเอียดสถาปัตยกรรมดูจาก diagram ที่คุยกันไว้ก่อนหน้า
 
 ## สิ่งที่ต้องเตรียมก่อน
 
 - Droplet DigitalOcean: Ubuntu 22.04, `s-1vcpu-1gb`
-- โดเมนหรือ subdomain ที่ชี้ DNS A record มาที่ IP ของ droplet แล้ว (Caddy ต้องใช้ขอ TLS cert)
+- โดเมนหรือ subdomain ที่ชี้ DNS A record มาที่ IP ของ droplet แล้ว (Chiyu ต้องใช้ขอ TLS cert)
 - Line Developers Console: สร้าง Messaging API channel, เก็บ Channel secret + Channel access token
 - Line Developers Console: สร้าง LINE Login channel สำหรับ LIFF dashboard (ทำตอนขั้นตอนที่ 7 ก็ได้)
 - Google Cloud: เปิดใช้ Vision API แล้วสร้าง API key
@@ -105,7 +105,7 @@ docker compose logs line-bot | grep line_user_id
 
 LIFF ต้องสร้างภายใต้ channel ที่มี "LINE Login" (จะเป็นคนละ channel id กับ Messaging API ก็ได้ แต่แนะนำสร้างในโปรเจกต์เดียวกันใน Line Developers Console เพื่อจัดการง่าย)
 
-`liff-web/` เป็นโปรเจกต์ SvelteKit แยกต่างหาก (adapter-static) ต้อง build ก่อนถึงจะได้ static files ให้ Caddy เสิร์ฟ
+`liff-web/` เป็นโปรเจกต์ SvelteKit แยกต่างหาก (adapter-static) ต้อง build ก่อนถึงจะได้ static files ให้ Chiyu เสิร์ฟ
 
 1. Line Developers Console > provider ของคุณ > สร้าง LINE Login channel (ถ้ายังไม่มี)
 2. ในแท็บ LIFF ของ channel นั้น กด Add
@@ -125,19 +125,19 @@ bun run build
 cd ..
 ```
 
-`bun run build` จะ output ไปที่ `liff-web/build/` ซึ่งเป็นโฟลเดอร์ที่ `docker-compose.yml` mount เข้า Caddy อยู่แล้ว
+`bun run build` จะ output ไปที่ `liff-web/build/` ซึ่งเป็นโฟลเดอร์ที่ `docker-compose.yml` mount เข้า Chiyu อยู่แล้ว
 
 6. รีสตาร์ท container:
 
 ```bash
-docker compose restart line-bot caddy
+docker compose restart line-bot chiyu
 ```
 
 7. เปิดจากในแอป Line ด้วยลิงก์ `https://liff.line.me/{LIFF_ID}` (ส่งลิงก์นี้คุยกับตัวเองใน Line เพื่อทดสอบ กด link จะเปิด LIFF ในแอป) — ควรเห็นการ์ดยอดคงเหลือแต่ละบัญชีและกราฟ cashflow
 
 หมายเหตุ: `/app/` ต้องเข้าจากในแอป Line เท่านั้นถึงจะ login อัตโนมัติผ่าน LIFF ได้ เปิดจากเบราว์เซอร์ปกติจะ redirect ไป login LINE ก่อน
 
-ทุกครั้งที่แก้โค้ดใน `liff-web/` ต้อง `bun run build` ใหม่แล้ว `docker compose restart caddy` ถึงจะเห็นผล (ไม่ใช่ hot reload แบบตอน dev)
+ทุกครั้งที่แก้โค้ดใน `liff-web/` ต้อง `bun run build` ใหม่แล้ว `docker compose restart chiyu` ถึงจะเห็นผล (ไม่ใช่ hot reload แบบตอน dev)
 
 ## ความปลอดภัยที่ควรทำต่อ
 
@@ -152,9 +152,9 @@ cd /opt/line-budget-bot
 git pull            # หรือ scp ไฟล์ใหม่ทับ
 docker compose up -d --build line-bot
 
-# ถ้าแก้ liff-web/ ด้วย ต้อง build ใหม่ก่อน restart caddy
+# ถ้าแก้ liff-web/ ด้วย ต้อง build ใหม่ก่อน restart chiyu
 cd liff-web && bun install && bun run build && cd ..
-docker compose restart caddy
+docker compose restart chiyu
 ```
 
 ## สิ่งที่ยังเป็น TODO ในโค้ด (จุดต่อยอด)
