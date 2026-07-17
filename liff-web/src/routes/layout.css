@@ -1,2 +1,23 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
+
+html {
+	/* ปิดกรอบไฮไลต์ตอนแตะบนมือถือ + กันหน้าเด้งยางตอน scroll สุด */
+	-webkit-tap-highlight-color: transparent;
+	overscroll-behavior-y: none;
+}
+
+body {
+	background-color: var(--color-stone-100);
+	font-family:
+		system-ui,
+		-apple-system,
+		'Segoe UI',
+		'Noto Sans Thai',
+		sans-serif;
+}
+
+/* ตัวเลขเรียงตรงกันในลิสต์ยอดเงิน */
+.tabular {
+	font-variant-numeric: tabular-nums;
+}

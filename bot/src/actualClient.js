@@ -64,6 +64,12 @@ async function getCategoryBudget(month) {
   return actualApi.getBudgetMonth(month); // month format: 'YYYY-MM'
 }
 
+// ตั้งงบของหมวดหมู่ในเดือนนั้น — amount หน่วยสตางค์ (integer) ตามที่ Actual เก็บ
+async function setBudgetAmount(month, categoryId, amount) {
+  await init();
+  return actualApi.setBudgetAmount(month, categoryId, Math.round(amount));
+}
+
 async function getTransactions(accountId, since, until) {
   await init();
   return actualApi.getTransactions(
@@ -91,6 +97,7 @@ module.exports = {
   getAccounts,
   getCategories,
   getCategoryBudget,
+  setBudgetAmount,
   getTransactions,
   getAccountBalance,
 };

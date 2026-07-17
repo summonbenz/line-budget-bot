@@ -13,7 +13,9 @@ export function ensureLiffReady(): Promise<void> {
 async function initLiff(): Promise<void> {
 	const liffId = import.meta.env.VITE_LIFF_ID;
 	if (!liffId) {
-		throw new Error('ยังไม่ได้ตั้งค่า VITE_LIFF_ID — คัดลอก .env.example เป็น .env แล้วใส่ LIFF ID');
+		throw new Error(
+			'ยังไม่ได้ตั้งค่า VITE_LIFF_ID — คัดลอก .env.example เป็น .env แล้วใส่ LIFF ID'
+		);
 	}
 
 	await window.liff.init({ liffId });
