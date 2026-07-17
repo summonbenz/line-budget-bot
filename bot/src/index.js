@@ -139,7 +139,9 @@ async function offerAccountChoice(event, { label, amount, ref, source, date }) {
 
   const isIncome = amount > 0;
   const categories = await actual.getCategories();
-  const category = guessCategory(label, categories, isIncome);
+  let category = guessCategory(label, categories, isIncome);
+  // รายจ่ายที่เดาหมวดไม่ได้ → ใช้ Food เป็นค่าเริ่มต้น (ผู้ใช้ค่อยแก้ทีหลังได้)
+  if (!category && !isIncome) category = findFoodCategory(categories);
   console.log(
     'category guess:',
     JSON.stringify({ label, isIncome, guessed: category?.name || null })
@@ -280,14 +282,16 @@ async function handleAddTx(event, data) {
 
   const accountName =
     (await actual.getAccounts()).find((a) => a.id === accountId)?.name || accountId;
-  const lines = [
-    'บันทึกแล้ว:',
-    `${label} ${amount} บาท`,
-    ...(categoryName ? [`หมวดหมู่: ${categoryName}`] : []),
-    `บัญชี: ${accountName}`,
-    ...(date ? [`วันที่: ${date}`] : []),
-  ];
-  return reply(event.replyToken, lines.join('\n'));
+  return client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [
+      {
+        type: 'flex',
+        altText: `จดแล้ว: ${label} ${amount} บาท`,
+        contents: buildAddedBubble({ label, amount, categoryName, accountName, date }),
+      },
+    ],
+  });
 }
 
 // รูปที่ส่งเข้ามาอาจมี QR Code (ค่าเริ่มต้นคือมี — QR แบบ Thai QR Payment ที่ผูกยอดเงินตายตัว)
@@ -528,6 +532,42 @@ const THEME = {
   green: '#2E9E5B', // รายรับ/ยอดบวก
 };
 
+// หาหมวด "อาหาร/Food" เพื่อใช้เป็นค่าเริ่มต้นของรายจ่ายที่เดาหมวดไม่ได้
+function findFoodCategory(categories) {
+  return (
+    (categories || []).find(
+      (c) => !c.hidden && !c.is_income && /(food|dining|อาหาร)/i.test(c.name)
+    ) || null
+  );
+}
+
+// หัวการ์ดธีมจิยุ (พื้นครีม + subtitle + รูปจิยุถ้าตั้ง CHIYU_HERO_URL) ใช้ร่วมกันทุกการ์ดผลสำเร็จ
+function themeHeader(title) {
+  const texts = {
+    type: 'box',
+    layout: 'vertical',
+    spacing: 'xs',
+    flex: CHIYU_HERO_URL ? 7 : 1,
+    contents: [
+      { type: 'text', text: title, weight: 'bold', size: 'lg', color: THEME.ink, wrap: true },
+      { type: 'text', text: 'อย่าลืมตรวจสอบรายการที่จดด้วยนะคะ', size: 'sm', color: THEME.muted, wrap: true },
+    ],
+  };
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    paddingAll: 'lg',
+    backgroundColor: THEME.cream,
+    spacing: 'md',
+    contents: [
+      texts,
+      ...(CHIYU_HERO_URL
+        ? [{ type: 'image', url: CHIYU_HERO_URL, flex: 3, size: 'full', aspectMode: 'fit', gravity: 'center' }]
+        : []),
+    ],
+  };
+}
+
 // pill badge เล็กๆ พื้นสี + ตัวอักษรขาว (เหมือน badge "รายจ่าย" ในการ์ดจดรายการเดี่ยว)
 function badge(text, color) {
   return {
@@ -549,24 +589,6 @@ function buildImportDoneBubble(txs, accountName) {
   const expense = txs.reduce((s, t) => (t.amount < 0 ? s + t.amount : s), 0);
   const net = income + expense;
 
-  // หัวการ์ด: ข้อความซ้าย + รูปจิยุขวา (ถ้าตั้ง CHIYU_HERO_URL) บนพื้นครีม
-  const headerTexts = {
-    type: 'box',
-    layout: 'vertical',
-    spacing: 'xs',
-    flex: CHIYU_HERO_URL ? 7 : 1,
-    contents: [
-      { type: 'text', text: 'นำเข้าสำเร็จ ✅', weight: 'bold', size: 'lg', color: THEME.ink, wrap: true },
-      {
-        type: 'text',
-        text: 'อย่าลืมตรวจสอบรายการที่จดด้วยนะคะ',
-        size: 'sm',
-        color: THEME.muted,
-        wrap: true,
-      },
-    ],
-  };
-
   const sumRow = (label, text, color) => ({
     type: 'box',
     layout: 'horizontal',
@@ -579,19 +601,7 @@ function buildImportDoneBubble(txs, accountName) {
 
   return {
     type: 'bubble',
-    header: {
-      type: 'box',
-      layout: 'horizontal',
-      paddingAll: 'lg',
-      backgroundColor: THEME.cream,
-      spacing: 'md',
-      contents: [
-        headerTexts,
-        ...(CHIYU_HERO_URL
-          ? [{ type: 'image', url: CHIYU_HERO_URL, flex: 3, size: 'full', aspectMode: 'fit', gravity: 'center' }]
-          : []),
-      ],
-    },
+    header: themeHeader('นำเข้าสำเร็จ ✅'),
     body: {
       type: 'box',
       layout: 'vertical',
@@ -627,6 +637,54 @@ function buildImportDoneBubble(txs, accountName) {
             },
           ],
         },
+      ],
+    },
+  };
+}
+
+// Flex: การ์ด "จดสำเร็จ" ของการเพิ่มรายการเดี่ยว (พิมพ์ข้อความ/สลิป/QR) — ธีมจิยุเดียวกับการ์ดนำเข้า
+function buildAddedBubble({ label, amount, categoryName, accountName, date }) {
+  const isIncome = amount > 0;
+  const amountColor = isIncome ? THEME.green : THEME.magenta;
+
+  const infoLine = (k, v) => ({
+    type: 'box',
+    layout: 'horizontal',
+    contents: [
+      { type: 'text', text: k, size: 'sm', color: THEME.muted, flex: 4 },
+      { type: 'text', text: v, size: 'sm', weight: 'bold', align: 'end', color: THEME.ink, flex: 6, wrap: true },
+    ],
+  });
+
+  return {
+    type: 'bubble',
+    header: themeHeader('จดสำเร็จ ✅'),
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          alignItems: 'center',
+          spacing: 'md',
+          contents: [
+            badge(isIncome ? 'รายรับ' : 'รายจ่าย', amountColor),
+            { type: 'text', text: label, size: 'md', weight: 'bold', color: THEME.ink, wrap: true, flex: 1 },
+          ],
+        },
+        {
+          type: 'text',
+          text: `${isIncome ? '+' : '-'}${fmtAmount(amount)} บาท`,
+          size: 'xxl',
+          weight: 'bold',
+          color: amountColor,
+        },
+        { type: 'separator' },
+        ...(categoryName ? [infoLine('หมวดหมู่', categoryName)] : []),
+        infoLine('บัญชี', accountName),
+        ...(date ? [infoLine('วันที่', date)] : []),
       ],
     },
   };
