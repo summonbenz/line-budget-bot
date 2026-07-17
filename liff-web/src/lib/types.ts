@@ -76,6 +76,15 @@ export interface ReflectResponse {
 	months: ReflectMonth[];
 }
 
+export interface CashflowMonth {
+	month: string; // 'YYYY-MM'
+	totalDebt: number; // หนี้บัตรรวม ณ สิ้นเดือน (สตางค์, ค่าบวก)
+}
+
+export interface CashflowResponse {
+	months: CashflowMonth[];
+}
+
 export interface NewTransaction {
 	accountId: string;
 	amount: number; // หน่วยบาท มีเครื่องหมาย +/- แล้ว (ฝั่ง bot คูณ 100 เอง)

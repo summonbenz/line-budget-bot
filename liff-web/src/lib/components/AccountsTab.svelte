@@ -47,12 +47,12 @@
 
 	const onBudget = $derived(accounts.filter((a) => !a.offBudget));
 	const offBudget = $derived(accounts.filter((a) => a.offBudget));
-	const netWorth = $derived(accounts.reduce((sum, a) => sum + a.balance, 0));
+	const netWorth = $derived(onBudget.reduce((sum, a) => sum + a.balance, 0));
 	const totalAssets = $derived(
-		accounts.reduce((sum, a) => sum + (a.balance > 0 ? a.balance : 0), 0)
+		onBudget.reduce((sum, a) => sum + (a.balance > 0 ? a.balance : 0), 0)
 	);
 	const totalDebt = $derived(
-		accounts.reduce((sum, a) => sum + (a.balance < 0 ? -a.balance : 0), 0)
+		onBudget.reduce((sum, a) => sum + (a.balance < 0 ? -a.balance : 0), 0)
 	);
 
 	const cards = $derived(accounts.filter((a) => a.isCard));

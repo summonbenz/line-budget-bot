@@ -286,25 +286,33 @@ router.get('/reflect', async (req, res) => {
   }
 });
 
+// หนี้บัตรรวม ณ สิ้นเดือนย้อนหลัง N เดือน (สูงสุด 24) — สำหรับกราฟแนวโน้มหนี้ในแท็บ Reflect
+// totalDebt หน่วยสตางค์ ค่าบวก (รวมเฉพาะบัตรที่ยอดติดลบ)
 router.get('/cashflow', async (req, res) => {
   try {
-    const monthsBack = Number(req.query.months) || 6;
+    const monthsBack = Math.min(Number(req.query.months) || 6, 24);
     const cardAccountIds = getCardAccountIds();
+
+    // ดึง transaction ของแต่ละบัตรครั้งเดียวแล้วรวมยอดสะสมเอง — ถ้าเรียก getAccountBalance
+    // ทีละเดือนจะ fetch transaction ชุดเดิมซ้ำทุกเดือน (แพงมากที่ 24 เดือน)
+    const txLists = await Promise.all(cardAccountIds.map((id) => actual.getTransactions(id)));
 
     const months = [];
     const now = new Date();
 
     for (let i = monthsBack - 1; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i + 1, 0); // วันสุดท้ายของเดือนนั้น
-      const asOfDate = d.toISOString().slice(0, 10);
-      const monthLabel = asOfDate.slice(0, 7);
+      // ประกอบ string ตามเวลาท้องถิ่นเอง — toISOString() เป็น UTC จะถอยไปเป็นวันก่อนหน้า
+      const asOfDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+        d.getDate()
+      ).padStart(2, '0')}`;
 
-      const balances = await Promise.all(
-        cardAccountIds.map((id) => actual.getAccountBalance(id, asOfDate))
-      );
-      const totalDebt = balances.reduce((sum, b) => sum + (b < 0 ? Math.abs(b) : 0), 0);
+      const totalDebt = txLists.reduce((sum, txs) => {
+        const balance = txs.reduce((s, t) => s + (t.date <= asOfDate ? t.amount : 0), 0);
+        return sum + (balance < 0 ? Math.abs(balance) : 0);
+      }, 0);
 
-      months.push({ month: monthLabel, totalDebt });
+      months.push({ month: asOfDate.slice(0, 7), totalDebt });
     }
 
     res.json({ months });

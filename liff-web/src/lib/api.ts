@@ -2,6 +2,7 @@ import { getAuthHeaders } from './liff';
 import type {
 	AccountsResponse,
 	BudgetResponse,
+	CashflowResponse,
 	CategoriesResponse,
 	NewTransaction,
 	ReflectResponse,
@@ -76,4 +77,9 @@ export function getCategories(): Promise<CategoriesResponse> {
 
 export function getReflect(months = 6): Promise<ReflectResponse> {
 	return apiFetch<ReflectResponse>(`/api/reflect?months=${months}`);
+}
+
+/** หนี้บัตรรวม ณ สิ้นเดือนย้อนหลัง N เดือน (ฝั่ง bot จำกัดสูงสุด 24) */
+export function getCashflow(months = 6): Promise<CashflowResponse> {
+	return apiFetch<CashflowResponse>(`/api/cashflow?months=${months}`);
 }
