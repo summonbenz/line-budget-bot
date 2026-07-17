@@ -44,10 +44,14 @@ async function handleEvent(event) {
   ).run(userId);
 
   if (event.type === 'postback') {
+    await showLoading(userId);
     return handlePostback(event);
   }
 
   if (event.type !== 'message') return;
+
+  // แสดง loading animation ระหว่างรอประมวลผล (โดยเฉพาะรูปที่ต้องเรียก Gemini + Actual API)
+  await showLoading(userId);
 
   if (event.message.type === 'text') {
     return handleText(event);
@@ -57,6 +61,17 @@ async function handleEvent(event) {
   }
   if (event.message.type === 'file') {
     return handleFile(event);
+  }
+}
+
+// แสดง loading animation ในแชท 1-1 (LINE loading indicator API) — auto หายเมื่อบอทตอบ หรือครบเวลา
+// ใช้ได้เฉพาะแชทตัวต่อตัว (source.type === 'user') และห้ามให้ error ตรงนี้ทำให้ flow หลักล้ม
+async function showLoading(userId) {
+  if (!userId) return;
+  try {
+    await client.showLoadingAnimation({ chatId: userId, loadingSeconds: 10 });
+  } catch (err) {
+    console.error('showLoadingAnimation error:', err);
   }
 }
 
