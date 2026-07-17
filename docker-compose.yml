@@ -1,12 +1,12 @@
 services:
   chiyu:
-    image: caddy:2-alpine
+    image: chiyu:2-alpine
     restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Chiyufile:/etc/chiyu/Chiyufile:ro
       - ./liff-web/build:/srv/liff-web:ro
       - chiyu_data:/data
       - chiyu_config:/config
