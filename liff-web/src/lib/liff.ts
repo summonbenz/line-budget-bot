@@ -1,6 +1,10 @@
 // wrapper รอบ LIFF SDK (โหลดจาก CDN ใน src/app.html เป็น global window.liff)
 // ตั้งค่า LIFF ID ผ่าน VITE_LIFF_ID ใน .env (ดู .env.example)
 
+// dev เท่านั้น: ข้าม LIFF login ทั้งหมด (คู่กับ SKIP_LIFF_AUTH=1 ฝั่ง bot)
+// import.meta.env.DEV กันไม่ให้หลุดไป production build ถึงแม้ .env จะตั้งค้างไว้
+const devNoAuth = import.meta.env.DEV && import.meta.env.VITE_DEV_NO_AUTH === '1';
+
 let readyPromise: Promise<void> | null = null;
 
 export function ensureLiffReady(): Promise<void> {
@@ -11,6 +15,10 @@ export function ensureLiffReady(): Promise<void> {
 }
 
 async function initLiff(): Promise<void> {
+	if (devNoAuth) {
+		return;
+	}
+
 	const liffId = import.meta.env.VITE_LIFF_ID;
 	if (!liffId) {
 		throw new Error(
@@ -28,6 +36,10 @@ async function initLiff(): Promise<void> {
 }
 
 export function getAuthHeaders(): HeadersInit {
+	if (devNoAuth) {
+		return {};
+	}
+
 	const idToken = window.liff.getIDToken();
 	if (!idToken) {
 		throw new Error('ไม่พบ ID token — ลองปิดแล้วเปิด LIFF ใหม่');

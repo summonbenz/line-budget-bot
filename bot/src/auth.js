@@ -5,6 +5,13 @@
 // พอ require() แบบ CJS แล้ว interop คืน module namespace object มาแทนฟังก์ชัน ทำให้ fetch(...) พัง
 
 async function verifyLiffUser(req, res, next) {
+  // dev เท่านั้น: SKIP_LIFF_AUTH=1 ข้ามการตรวจ token กับ LINE (คู่กับ VITE_DEV_NO_AUTH=1 ฝั่ง liff-web)
+  // เช็ค NODE_ENV กันตั้งค้างไว้แล้วหลุดขึ้น production บน VPS
+  if (process.env.SKIP_LIFF_AUTH === '1' && process.env.NODE_ENV !== 'production') {
+    req.lineUserId = process.env.ALLOWED_LINE_USER_ID || 'dev-user';
+    return next();
+  }
+
   try {
     const authHeader = req.headers.authorization || '';
     const idToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
