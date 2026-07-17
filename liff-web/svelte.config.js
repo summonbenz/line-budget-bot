@@ -17,7 +17,13 @@ const config = {
 			pages: 'build',
 			assets: 'build',
 			fallback: 'index.html'
-		})
+		}),
+
+		// แอปถูกเสิร์ฟใต้ subpath /app (ดู Caddyfile: handle /app/*)
+		// ต้องตั้ง base เพื่อให้ asset ชี้เป็น /app/_app/... ไม่งั้นเบราว์เซอร์โหลดจาก /_app/ ที่ root แล้วพัง (หน้าขาว)
+		paths: {
+			base: '/app'
+		}
 	}
 };
 
