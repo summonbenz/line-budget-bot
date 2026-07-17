@@ -41,6 +41,10 @@ try {
 const IMPORT_DIR = path.join(__dirname, '..', 'data', 'imports');
 fs.mkdirSync(IMPORT_DIR, { recursive: true });
 
+// ภาพจิยุมุมหัวการ์ด "นำเข้าสำเร็จ" ให้เข้าชุดกับการ์ดจดรายการเดี่ยว — ตั้ง URL รูป (https) ใน .env
+// ถ้าไม่ตั้งไว้ก็ยังทำงานได้ แค่ไม่มีรูป (ต้องเป็น URL สาธารณะ https เท่านั้นตามข้อกำหนด Flex image)
+const CHIYU_HERO_URL = process.env.CHIYU_HERO_URL || null;
+
 const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
   channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
@@ -502,11 +506,130 @@ async function handleImportAccount(event, data) {
 
   cleanupImport(row); // ใช้ครั้งเดียว ลบไฟล์ + รายการค้าง กดซ้ำจะขึ้นหมดอายุ
   const accountName = (await actual.getAccounts()).find((a) => a.id === accountId)?.name || accountId;
-  const net = txs.reduce((s, t) => s + t.amount, 0);
-  return reply(
-    event.replyToken,
-    `นำเข้าเรียบร้อย ${txs.length} รายการ\nบัญชี: ${accountName}\nยอดสุทธิ: ${net.toLocaleString('en-US')} บาท`
-  );
+
+  return client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [
+      {
+        type: 'flex',
+        altText: `นำเข้าเรียบร้อย ${txs.length} รายการ`,
+        contents: buildImportDoneBubble(txs, accountName),
+      },
+    ],
+  });
+}
+
+// สีธีมจิยุ (โทนครีม + ชมพูมาเจนต้า) ให้การ์ดนำเข้าเข้าชุดกับการ์ดจดรายการเดี่ยว
+const THEME = {
+  cream: '#F4EEE2', // พื้นหัวการ์ด
+  ink: '#3D2C1F', // ตัวอักษรหลักบนครีม
+  muted: '#9B8B7A', // ตัวอักษรรอง
+  magenta: '#C2185B', // สีแบรนด์ (badge/รายจ่าย/ยอดติดลบ)
+  green: '#2E9E5B', // รายรับ/ยอดบวก
+};
+
+// pill badge เล็กๆ พื้นสี + ตัวอักษรขาว (เหมือน badge "รายจ่าย" ในการ์ดจดรายการเดี่ยว)
+function badge(text, color) {
+  return {
+    type: 'box',
+    layout: 'baseline',
+    flex: 0,
+    backgroundColor: color,
+    cornerRadius: 'xl',
+    paddingAll: 'xs',
+    paddingStart: 'md',
+    paddingEnd: 'md',
+    contents: [{ type: 'text', text, size: 'xs', weight: 'bold', color: '#FFFFFF' }],
+  };
+}
+
+// Flex: สรุปผลนำเข้าสำเร็จ — สไตล์ธีมจิยุ (หัวครีม + subtitle + รูปจิยุ) แยกรายรับ/รายจ่าย + ยอดสุทธิ
+function buildImportDoneBubble(txs, accountName) {
+  const income = txs.reduce((s, t) => (t.amount > 0 ? s + t.amount : s), 0);
+  const expense = txs.reduce((s, t) => (t.amount < 0 ? s + t.amount : s), 0);
+  const net = income + expense;
+
+  // หัวการ์ด: ข้อความซ้าย + รูปจิยุขวา (ถ้าตั้ง CHIYU_HERO_URL) บนพื้นครีม
+  const headerTexts = {
+    type: 'box',
+    layout: 'vertical',
+    spacing: 'xs',
+    flex: CHIYU_HERO_URL ? 7 : 1,
+    contents: [
+      { type: 'text', text: 'นำเข้าสำเร็จ ✅', weight: 'bold', size: 'lg', color: THEME.ink, wrap: true },
+      {
+        type: 'text',
+        text: 'อย่าลืมตรวจสอบรายการที่จดด้วยนะคะ',
+        size: 'sm',
+        color: THEME.muted,
+        wrap: true,
+      },
+    ],
+  };
+
+  const sumRow = (label, text, color) => ({
+    type: 'box',
+    layout: 'horizontal',
+    alignItems: 'center',
+    contents: [
+      badge(label, color),
+      { type: 'text', text, size: 'md', weight: 'bold', align: 'end', color, wrap: true },
+    ],
+  });
+
+  return {
+    type: 'bubble',
+    header: {
+      type: 'box',
+      layout: 'horizontal',
+      paddingAll: 'lg',
+      backgroundColor: THEME.cream,
+      spacing: 'md',
+      contents: [
+        headerTexts,
+        ...(CHIYU_HERO_URL
+          ? [{ type: 'image', url: CHIYU_HERO_URL, flex: 3, size: 'full', aspectMode: 'fit', gravity: 'center' }]
+          : []),
+      ],
+    },
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        {
+          type: 'box',
+          layout: 'horizontal',
+          alignItems: 'center',
+          contents: [
+            badge(`${txs.length} รายการ`, THEME.magenta),
+            { type: 'text', text: accountName, size: 'sm', weight: 'bold', align: 'end', color: THEME.ink, wrap: true },
+          ],
+        },
+        { type: 'separator' },
+        sumRow('รายรับ', `+${fmtAmount(income)}`, THEME.green),
+        sumRow('รายจ่าย', `-${fmtAmount(expense)}`, THEME.magenta),
+        { type: 'separator' },
+        {
+          type: 'box',
+          layout: 'horizontal',
+          alignItems: 'center',
+          contents: [
+            { type: 'text', text: 'ยอดสุทธิ', size: 'md', weight: 'bold', color: THEME.ink },
+            {
+              type: 'text',
+              text: `${net >= 0 ? '+' : '-'}${fmtAmount(net)} บาท`,
+              size: 'lg',
+              weight: 'bold',
+              align: 'end',
+              color: net >= 0 ? THEME.green : THEME.magenta,
+              wrap: true,
+            },
+          ],
+        },
+      ],
+    },
+  };
 }
 
 async function handleImportCancel(event, data) {
