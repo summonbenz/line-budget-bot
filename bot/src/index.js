@@ -54,6 +54,11 @@ async function handleEvent(event) {
 }
 
 async function handleText(event) {
+  const text = event.message.text.trim();
+  if (text === 'สวัสดี' || text === 'hello') {
+    return reply(event.replyToken, 'สวัสดีค่ะ จิยุพร้อมให้บริการค่า');
+  }
+
   const parsed = parseExpenseText(event.message.text);
   if (!parsed) {
     return reply(
