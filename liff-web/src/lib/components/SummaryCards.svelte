@@ -9,7 +9,7 @@
 </script>
 
 {#if accounts.length === 0}
-	<p class="text-sm text-gray-400">ยังไม่มีบัญชีใน Actual — สร้างบัญชีก่อนในหน้า /actual</p>
+	<p class="text-sm text-gray-400">ยังไม่มีบัญชีใน Actual — สร้างบัญชีก่อนในหน้าเว็บ Actual</p>
 {:else}
 	<div class="grid grid-cols-2 gap-3">
 		{#each accounts as account (account.id)}

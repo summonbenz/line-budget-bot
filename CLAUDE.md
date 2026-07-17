@@ -48,12 +48,11 @@ docker compose restart <service>
 ## Architecture
 
 ### Request routing (single Chiyu entrypoint)
-The `chiyu` service (configured via `Caddyfile`, running the Caddy web server) is the only container with a published port. It routes by path prefix to the other two containers over the internal `app` Docker network:
-- `/webhook*` and `/api/*` → `line-bot:3000`
-- `/app/*` → static files from the bind-mounted `liff-web/build` (LIFF dashboard)
-- `/actual*` → `actual-server:5006` (Actual Budget's own web UI, used for initial setup/admin)
+The Caddy service (configured via `Caddyfile`) is the only container with a published port. It routes to the other two containers over the internal `app` Docker network, on two separate domains:
+- On `$DOMAIN`, by path prefix: `/webhook*` and `/api/*` → `line-bot:3000`; `/app/*` → static files from the bind-mounted `liff-web/build` (LIFF dashboard)
+- On `$ACTUAL_DOMAIN` (a separate subdomain, root path) → `actual-server:5006` (Actual Budget's own web UI, used for initial setup/admin). It must be a separate (sub)domain rather than a path prefix under `$DOMAIN` — Actual's frontend references its JS/CSS bundles with root-absolute paths (e.g. `/static/js/index.*.js`), so proxying it under a path prefix breaks asset loading.
 
-`line-bot` and `actual-server` have no ports published to the host — only `chiyu` is reachable from outside.
+`line-bot` and `actual-server` have no ports published to the host — only Caddy is reachable from outside.
 
 ### Two unrelated auth mechanisms live in the same `bot/` process
 - The LINE webhook (`bot/src/index.js`, `POST /webhook`) is authenticated by `@line/bot-sdk`'s `line.middleware`, which verifies the LINE signature against the **raw** request body. Because of this, `express.json()` must never be applied globally ahead of this route — request bodies are parsed per-route, not app-wide.

@@ -18,24 +18,19 @@
 		file_server
 	}
 
-	# หน้าเว็บ Actual Budget - ใช้ตอน setup ครั้งแรก / ดู budget ผ่านเบราว์เซอร์
-	# ควรใส่ basicauth ป้องกันไว้ด้วย (ดูตัวอย่างด้านล่าง) เพราะเป็นข้อมูลการเงิน
-	handle /actual* {
-		reverse_proxy actual-server:5006
-	}
-
 	handle {
 		respond "ok" 200
 	}
 }
 
-# ตัวอย่างการใส่ basicauth กัน /actual (แนะนำให้เปิดใช้จริง):
-# {$DOMAIN} {
-# 	handle /actual* {
-# 		basicauth {
-# 			admin JDJhJDE0JGV4YW1wbGVoYXNoZXhhbXBsZQ==
-# 		}
-# 		reverse_proxy actual-server:5006
-# 	}
-# }
-# สร้าง hash ด้วยคำสั่ง: docker run --rm caddy caddy hash-password --plaintext 'your-password'
+# หน้าเว็บ Actual Budget อยู่คนละ (sub)domain แยกต่างหาก ไม่ใช่ path prefix
+# เพราะ Actual serve asset ด้วย absolute path (/static/js/...) ที่ hardcode ไว้ที่ root
+# เลย proxy เป็น path prefix ใต้โดเมนหลักไม่ได้ ต้องแยกโดเมน/ซับโดเมนเท่านั้น
+{$ACTUAL_DOMAIN} {
+	# ควรใส่ basicauth ป้องกันไว้ด้วย เพราะเป็นข้อมูลการเงิน (แนะนำให้เปิดใช้จริง):
+	# basicauth {
+	# 	admin JDJhJDE0JGV4YW1wbGVoYXNoZXhhbXBsZQ==
+	# }
+	# สร้าง hash ด้วยคำสั่ง: docker run --rm caddy caddy hash-password --plaintext 'your-password'
+	reverse_proxy actual-server:5006
+}

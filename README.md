@@ -73,7 +73,7 @@ docker compose logs -f line-bot   # ดู log กันพลาด
 
 ## ขั้นตอนที่ 5 — สร้าง budget ใน Actual ครั้งแรก
 
-1. เปิดเบราว์เซอร์ไปที่ `https://YOUR_DOMAIN/actual`
+1. เปิดเบราว์เซอร์ไปที่ `https://YOUR_ACTUAL_DOMAIN` (ค่า `ACTUAL_DOMAIN` ใน `.env` — ต้องเป็นซับโดเมนแยกจาก `DOMAIN` เพราะ Actual serve asset ด้วย absolute path ที่ proxy เป็น path prefix ไม่ได้)
 2. ตั้งรหัสผ่าน (ใช้ค่าเดียวกับ `ACTUAL_SERVER_PASSWORD` ใน `.env`)
 3. สร้างงบประมาณใหม่ (New budget) ตั้งชื่อ เช่น "ของฉัน"
 4. ไปที่ Settings > Show advanced settings > คัดลอกค่า Sync ID
@@ -142,7 +142,7 @@ docker compose restart line-bot chiyu
 ## ความปลอดภัยที่ควรทำต่อ
 
 - ปิด root SSH password login เปลี่ยนไปใช้ SSH key อย่างเดียว
-- เปิด basicauth คุม `/actual` path ใน `Caddyfile` (มีตัวอย่าง comment ไว้ในไฟล์แล้ว) เพราะเป็นหน้าที่เห็นข้อมูลการเงินทั้งหมด
+- เปิด basicauth คุม `ACTUAL_DOMAIN` block ใน `Caddyfile` (มีตัวอย่าง comment ไว้ในไฟล์แล้ว) เพราะเป็นหน้าที่เห็นข้อมูลการเงินทั้งหมด
 - สำรอง volume `actual_data` และ `bot_data` เป็นระยะ (`docker run --rm -v line-budget-bot_actual_data:/data -v $(pwd):/backup alpine tar czf /backup/actual-backup.tar.gz /data`)
 
 ## อัปเดตโค้ดทีหลัง
