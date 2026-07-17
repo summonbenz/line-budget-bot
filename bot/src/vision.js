@@ -1,7 +1,7 @@
 // เรียก Google Cloud Vision API (REST) สำหรับ OCR สลิป/PDF ที่เป็นรูปสแกน
 // ใช้ API key ธรรมดา (ง่ายสุดสำหรับ single-user, ไม่ต้องผูก service account)
-
-const fetch = require('node-fetch');
+// ใช้ fetch แบบ built-in ของ Node 18+ (ไม่ต้องพึ่ง node-fetch) — node-fetch v3 เป็น ESM-only
+// พอ require() แบบ CJS แล้ว interop คืน module namespace object มาแทนฟังก์ชัน ทำให้ fetch(...) พัง
 
 async function ocrImage(base64Image) {
   const res = await fetch(
@@ -13,7 +13,11 @@ async function ocrImage(base64Image) {
         requests: [
           {
             image: { content: base64Image },
-            features: [{ type: 'TEXT_DETECTION' }],
+            // DOCUMENT_TEXT_DETECTION แม่นกว่า TEXT_DETECTION สำหรับข้อความหนาแน่นแบบสลิป/เอกสาร
+            // languageHints บังคับให้เดาเป็นไทย/อังกฤษ กัน auto-detect หลุดไปอ่านเป็นภาษาอื่น
+            // (ไม่ใส่ hint แล้วเจอปัญหาจริง: ตัวเลขไทยกลายเป็นเลขอารบิก, วันที่/ชื่อธนาคารอ่านผิดเพี้ยน)
+            features: [{ type: 'DOCUMENT_TEXT_DETECTION' }],
+            imageContext: { languageHints: ['th', 'en'] },
           },
         ],
       }),

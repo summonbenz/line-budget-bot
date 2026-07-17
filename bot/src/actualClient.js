@@ -25,6 +25,7 @@ async function addTransaction({ accountId, amount, payee, category, date, notes 
       date: date || new Date().toISOString().slice(0, 10),
       amount: Math.round(amount * 100), // Actual เก็บยอดเป็นหน่วยสตางค์ (cents)
       payee_name: payee,
+      category,
       notes,
     },
   ]);
@@ -33,6 +34,11 @@ async function addTransaction({ accountId, amount, payee, category, date, notes 
 async function getAccounts() {
   await init();
   return actualApi.getAccounts();
+}
+
+async function getCategories() {
+  await init();
+  return actualApi.getCategories();
 }
 
 async function getCategoryBudget(month) {
@@ -64,6 +70,7 @@ module.exports = {
   init,
   addTransaction,
   getAccounts,
+  getCategories,
   getCategoryBudget,
   getTransactions,
   getAccountBalance,

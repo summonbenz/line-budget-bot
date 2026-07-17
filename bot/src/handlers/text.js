@@ -1,5 +1,6 @@
 // parse ข้อความแบบง่าย: "ป้ายกำกับ จำนวน" เช่น "ข้าว 60" หรือ "เงินเดือน +30000"
-// TODO: เพิ่ม mapping หมวดหมู่จากคำ, จำ payee ที่เคยพิมพ์ไว้
+// การเดาหมวดหมู่จากคำอยู่ที่ handlers/category.js
+// TODO: จำ payee ที่เคยพิมพ์ไว้
 
 function parseExpenseText(text) {
   const match = text.trim().match(/^(.+?)\s+([+-]?\d+(?:\.\d+)?)$/);

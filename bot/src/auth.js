@@ -1,8 +1,8 @@
 // ตรวจ ID token ที่ LIFF web ส่งมา (Authorization: Bearer <idToken>)
 // ยืนยันกับ LINE โดยตรงว่า token ยังไม่หมดอายุและออกจาก channel ของเราจริง
 // แล้วเช็คว่า user ที่ login เข้ามาคือเจ้าของบอท (single-user) เท่านั้น
-
-const fetch = require('node-fetch');
+// ใช้ fetch แบบ built-in ของ Node 18+ (ไม่ต้องพึ่ง node-fetch) — node-fetch v3 เป็น ESM-only
+// พอ require() แบบ CJS แล้ว interop คืน module namespace object มาแทนฟังก์ชัน ทำให้ fetch(...) พัง
 
 async function verifyLiffUser(req, res, next) {
   try {

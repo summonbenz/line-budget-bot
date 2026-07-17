@@ -36,6 +36,14 @@ CREATE TABLE IF NOT EXISTS transaction_refs (
   amount REAL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- รายการที่รอผู้ใช้เลือกบัญชี (Flex) — เก็บ payload เต็มไว้ที่นี่ แล้วใส่แค่ token สั้นๆ ใน postback
+-- กันชน limit 300 ตัวอักษรของ postback data (ชื่อร้าน/บัญชีไทยยาวๆ พอ encode แล้วบานเกิน)
+CREATE TABLE IF NOT EXISTS pending_tx (
+  token TEXT PRIMARY KEY,
+  payload TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `);
 
 module.exports = db;
