@@ -40,6 +40,10 @@ async function handleEvent(event) {
     `INSERT INTO users (line_user_id) VALUES (?) ON CONFLICT(line_user_id) DO NOTHING`
   ).run(userId);
 
+  if (event.type === 'postback') {
+    return handlePostback(event);
+  }
+
   if (event.type !== 'message') return;
 
   if (event.message.type === 'text') {
@@ -59,7 +63,7 @@ async function handleText(event) {
     return reply(event.replyToken, 'สวัสดีค่ะ จิยุพร้อมให้บริการค่า');
   }
 
-  const parsed = parseExpenseText(event.message.text);
+  const parsed = parseExpenseText(text);
   if (!parsed) {
     return reply(
       event.replyToken,
@@ -67,10 +71,68 @@ async function handleText(event) {
     );
   }
 
-  // TODO: map ไป accountId จริง (default cash account หรือให้เลือกบัตร) ก่อนเรียก addTransaction
-  // await actual.addTransaction({ accountId, amount: parsed.amount, payee: parsed.label });
+  const accounts = (await actual.getAccounts()).filter((a) => !a.closed);
+  if (accounts.length === 0) {
+    return reply(event.replyToken, 'ยังไม่มีบัญชีใน Actual Budget ให้เลือก');
+  }
 
-  return reply(event.replyToken, `บันทึกแล้ว: ${parsed.label} ${parsed.amount} บาท`);
+  const items = accounts.slice(0, 13).map((a) => ({
+    type: 'action',
+    action: {
+      type: 'postback',
+      label: a.name.slice(0, 20),
+      data: buildAddTxPostbackData({
+        accountId: a.id,
+        accountName: a.name.slice(0, 30),
+        amount: parsed.amount,
+        label: parsed.label.slice(0, 50),
+      }),
+      displayText: a.name,
+    },
+  }));
+
+  return client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [
+      {
+        type: 'text',
+        text: `${parsed.label} ${parsed.amount} บาท — เลือกบัญชี`,
+        quickReply: { items },
+      },
+    ],
+  });
+}
+
+function buildAddTxPostbackData({ accountId, accountName, amount, label }) {
+  return new URLSearchParams({
+    action: 'add_tx',
+    accountId,
+    accountName,
+    amount: String(amount),
+    label,
+  }).toString();
+}
+
+async function handlePostback(event) {
+  const data = new URLSearchParams(event.postback.data);
+  if (data.get('action') !== 'add_tx') return;
+
+  const accountId = data.get('accountId');
+  const accountName = data.get('accountName');
+  const amount = Number(data.get('amount'));
+  const label = data.get('label');
+
+  try {
+    await actual.addTransaction({ accountId, amount, payee: label });
+  } catch (err) {
+    console.error('handlePostback addTransaction error:', err);
+    return reply(event.replyToken, 'บันทึกรายการไม่สำเร็จ ลองใหม่อีกครั้งค่ะ');
+  }
+
+  return reply(
+    event.replyToken,
+    `บันทึกแล้ว: ${label} ${amount} บาท (${accountName})`
+  );
 }
 
 async function handleImage(event) {
