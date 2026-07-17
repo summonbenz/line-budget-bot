@@ -168,11 +168,15 @@ router.put('/budget', async (req, res) => {
   }
 });
 
-// บัญชีทั้งหมด (ไม่รวมที่ปิดแล้ว) + on/off budget — สำหรับแท็บ Accounts
+// บัญชีทั้งหมด (ไม่รวมที่ปิดแล้ว) + on/off budget + วงเงินบัตร — สำหรับแท็บ Accounts
 router.get('/accounts', async (req, res) => {
   try {
     const accounts = await actual.getAccounts();
-    const cardAccountIds = new Set(getCardAccountIds());
+    // credit_limit ใน SQLite เก็บหน่วยบาท (REAL) — แปลงเป็นสตางค์ให้ตรงกับยอดอื่นๆ ใน API
+    const cardRows = db
+      .prepare(`SELECT actual_account_id, credit_limit FROM cards WHERE actual_account_id IS NOT NULL`)
+      .all();
+    const limits = new Map(cardRows.map((r) => [r.actual_account_id, r.credit_limit]));
 
     const open = accounts.filter((a) => !a.closed);
     const withBalance = await Promise.all(
@@ -180,7 +184,8 @@ router.get('/accounts', async (req, res) => {
         id: a.id,
         name: a.name,
         offBudget: !!a.offbudget,
-        isCard: cardAccountIds.has(a.id),
+        isCard: limits.has(a.id),
+        creditLimit: limits.get(a.id) != null ? Math.round(limits.get(a.id) * 100) : null,
         balance: await actual.getAccountBalance(a.id),
       }))
     );
@@ -189,6 +194,46 @@ router.get('/accounts', async (req, res) => {
   } catch (err) {
     console.error('GET /api/accounts error:', err);
     res.status(500).json({ error: 'failed to load accounts' });
+  }
+});
+
+// ตั้ง/แก้วงเงินบัตรเครดิต — upsert ลงตาราง cards (ผูกบัญชี Actual เข้ากับ SQLite)
+// นี่เป็นช่องทางเดียวตอนนี้ที่เขียน cards.actual_account_id (ยังไม่มีคำสั่งฝั่ง LINE bot)
+// creditLimit หน่วยบาทตาม schema เดิมของตาราง (REAL)
+router.put('/cards/:accountId', async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    const { creditLimit } = req.body || {};
+    if (
+      creditLimit !== null &&
+      (typeof creditLimit !== 'number' || !Number.isFinite(creditLimit) || creditLimit < 0)
+    ) {
+      return res.status(400).json({ error: 'creditLimit must be a non-negative number or null' });
+    }
+
+    const accounts = await actual.getAccounts();
+    const account = accounts.find((a) => a.id === accountId);
+    if (!account) {
+      return res.status(404).json({ error: 'account not found' });
+    }
+
+    const existing = db.prepare(`SELECT id FROM cards WHERE actual_account_id = ?`).get(accountId);
+    if (existing) {
+      db.prepare(`UPDATE cards SET credit_limit = ?, name = ? WHERE actual_account_id = ?`).run(
+        creditLimit,
+        account.name,
+        accountId
+      );
+    } else {
+      db.prepare(
+        `INSERT INTO cards (line_user_id, name, actual_account_id, credit_limit) VALUES (?, ?, ?, ?)`
+      ).run(req.lineUserId, account.name, accountId, creditLimit);
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('PUT /api/cards error:', err);
+    res.status(500).json({ error: 'failed to save card limit' });
   }
 });
 

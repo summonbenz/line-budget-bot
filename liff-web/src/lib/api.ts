@@ -58,6 +58,11 @@ export function addTransaction(tx: NewTransaction): Promise<void> {
 	return apiFetch<void>('/api/transactions', { method: 'POST', body: tx });
 }
 
+/** ตั้ง/แก้วงเงินบัตรเครดิต — creditLimit หน่วยบาท (ฝั่ง bot เก็บบาทลง SQLite ตรงๆ) */
+export function setCardLimit(accountId: string, creditLimit: number): Promise<void> {
+	return apiFetch<void>(`/api/cards/${accountId}`, { method: 'PUT', body: { creditLimit } });
+}
+
 export function getCategories(): Promise<CategoriesResponse> {
 	return apiFetch<CategoriesResponse>('/api/categories');
 }

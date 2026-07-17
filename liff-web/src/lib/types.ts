@@ -6,6 +6,7 @@ export interface Account {
 	isCard: boolean;
 	offBudget: boolean;
 	balance: number;
+	creditLimit: number | null; // วงเงินบัตร (สตางค์) — null = ยังไม่ได้ตั้ง
 }
 
 export interface AccountsResponse {
