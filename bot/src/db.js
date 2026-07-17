@@ -44,6 +44,20 @@ CREATE TABLE IF NOT EXISTS pending_tx (
   payload TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- สถานะการนำเข้า statement PDF แบบหลายขั้นตอน (เลือกธนาคาร → ถอด statement → เลือกบัญชี → ยืนยัน)
+-- LINE ไม่มี session ในตัว เลยเก็บ state ต่อการนำเข้าไว้ที่นี่ อ้างถึงด้วย token สั้นๆ ใน postback
+-- transactions = JSON รายการที่ AI ถอดได้ (เก็บหลังเลือกธนาคาร), file_path = PDF ต้นฉบับบนดิสก์
+CREATE TABLE IF NOT EXISTS pending_import (
+  token TEXT PRIMARY KEY,
+  line_user_id TEXT NOT NULL,
+  file_path TEXT,
+  bank TEXT,
+  account_id TEXT,
+  transactions TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 `);
 
 module.exports = db;

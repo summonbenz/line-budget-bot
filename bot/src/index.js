@@ -1,5 +1,7 @@
 require('dotenv').config();
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const express = require('express');
 const line = require('@line/bot-sdk');
 const db = require('./db');
@@ -8,6 +10,36 @@ const { parseExpenseText } = require('./handlers/text');
 const { guessCategory } = require('./handlers/category');
 const { decodeQrFromImage, parseThaiQr } = require('./qr');
 const { extractSlip } = require('./slipExtract');
+const { renderPdfToImages } = require('./pdf');
+const { extractStatement } = require('./statementExtract');
+const { extractPayee } = require('./payee');
+
+// ธนาคารให้เลือกตอนนำเข้า statement PDF — key ใช้จับคู่รหัสผ่านใน PDF_PASSWORDS และเป็น hint ให้ AI
+const BANKS = [
+  { key: 'kbank', label: 'กสิกรไทย (KBank)', color: '#138B4B' },
+ // { key: 'scb', label: 'ไทยพาณิชย์ (SCB)', color: '#4E2E7F' },
+ // { key: 'bbl', label: 'กรุงเทพ (BBL)', color: '#1E3A8A' },
+ // { key: 'ktb', label: 'กรุงไทย (KTB)', color: '#00A4E4' },
+  { key: 'ttb', label: 'ทีทีบี (ttb)', color: '#002D63' }, // หรือใช้สีส้มคู่บุญ #F36F21
+  { key: 'bay', label: 'กรุงศรี (BAY)', color: '#FCC419' },
+  { key: 'uob', label: 'ยูโอบี (UOB)', color: '#0B3674' },
+ // { key: 'kkp', label: 'เกียรตินาคินภัทร (KKP)', color: '#252B46' },
+ // { key: 'gsb', label: 'ออมสิน (GSB)', color: '#EC008C' },
+  { key: 'other', label: 'อื่นๆ / ไม่ระบุ', color: '#6B7280' },
+];
+
+// รหัสผ่าน PDF ต่อธนาคาร ตั้งใน .env เป็น JSON เช่น PDF_PASSWORDS={"kbank":"1234","scb":"..."}
+// key ต้องตรงกับ BANKS[].key — ธนาคารที่ไม่มีในนี้ถือว่า PDF ไม่ติดรหัส
+let PDF_PASSWORDS = {};
+try {
+  PDF_PASSWORDS = JSON.parse(process.env.PDF_PASSWORDS || '{}');
+} catch (err) {
+  console.error('PDF_PASSWORDS ไม่ใช่ JSON ที่ถูกต้อง — จะถือว่าไม่มีรหัสผ่าน:', err.message);
+}
+
+// โฟลเดอร์เก็บ PDF ต้นฉบับระหว่างรอผู้ใช้เลือกธนาคาร/บัญชี (ลบทิ้งเมื่อยืนยัน/ยกเลิก/หมดอายุ)
+const IMPORT_DIR = path.join(__dirname, '..', 'data', 'imports');
+fs.mkdirSync(IMPORT_DIR, { recursive: true });
 
 const config = {
   channelSecret: process.env.LINE_CHANNEL_SECRET,
@@ -66,10 +98,10 @@ async function handleEvent(event) {
 
 // แสดง loading animation ในแชท 1-1 (LINE loading indicator API) — auto หายเมื่อบอทตอบ หรือครบเวลา
 // ใช้ได้เฉพาะแชทตัวต่อตัว (source.type === 'user') และห้ามให้ error ตรงนี้ทำให้ flow หลักล้ม
-async function showLoading(userId) {
+async function showLoading(userId, loadingSeconds = 10) {
   if (!userId) return;
   try {
-    await client.showLoadingAnimation({ chatId: userId, loadingSeconds: 10 });
+    await client.showLoadingAnimation({ chatId: userId, loadingSeconds });
   } catch (err) {
     console.error('showLoadingAnimation error:', err);
   }
@@ -197,8 +229,23 @@ function infoRow(label, value) {
 
 async function handlePostback(event) {
   const data = new URLSearchParams(event.postback.data);
-  if (data.get('action') !== 'add_tx') return;
+  switch (data.get('action')) {
+    case 'add_tx':
+      return handleAddTx(event, data);
+    case 'imp_bank':
+      return handleImportBank(event, data);
+    case 'imp_review':
+      return handleImportReview(event, data);
+    case 'imp_account':
+      return handleImportAccount(event, data);
+    case 'imp_cancel':
+      return handleImportCancel(event, data);
+    default:
+      return;
+  }
+}
 
+async function handleAddTx(event, data) {
   const token = data.get('token');
   const accountId = data.get('accountId');
 
@@ -304,14 +351,415 @@ async function handleImage(event) {
   });
 }
 
+// นำเข้า statement PDF แบบหลายขั้น: รับไฟล์ → เลือกธนาคาร (handleImportBank) → ถอดรายการด้วย AI
+// → พรีวิวรายการทั้งหมดให้ตรวจ+ยืนยัน (handleImportReview) → เลือกบัญชีแล้วบันทึกเข้า Actual (handleImportAccount)
 async function handleFile(event) {
-  // TODO: ดึงไฟล์ผ่าน blobClient.getMessageContent, เช็คว่าเป็น .pdf,
-  // แล้วผูก parser ต่อธนาคาร (pdf-parse หรือส่งหน้าที่เป็นรูปเข้า Vision OCR)
-  return reply(event.replyToken, 'รับไฟล์แล้ว (parser สำหรับ PDF statement ยังไม่ผูก)');
+  const fileName = event.message.fileName || '';
+  if (!fileName.toLowerCase().endsWith('.pdf')) {
+    return reply(event.replyToken, 'รองรับเฉพาะไฟล์ PDF statement ค่ะ (ส่งไฟล์ .pdf มาได้เลย)');
+  }
+
+  // ดาวน์โหลดไฟล์จาก LINE แล้วเก็บลงดิสก์ระหว่างรอผู้ใช้เลือกธนาคาร (postback มีแค่ token)
+  const stream = await blobClient.getMessageContent(event.message.id);
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(chunk);
+  const buffer = Buffer.concat(chunks);
+
+  const token = crypto.randomBytes(9).toString('hex');
+  const filePath = path.join(IMPORT_DIR, `${token}.pdf`);
+  fs.writeFileSync(filePath, buffer);
+
+  db.prepare(
+    `INSERT INTO pending_import (token, line_user_id, file_path, status) VALUES (?, ?, ?, 'await_bank')`
+  ).run(token, event.source.userId, filePath);
+  sweepStaleImports(); // เก็บกวาดไฟล์/รายการค้างเก่ากัน disk บวม
+
+  return client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [
+      {
+        type: 'flex',
+        altText: 'เลือกธนาคารของ statement',
+        contents: buildBankPickerBubble(token, fileName),
+      },
+    ],
+  });
+}
+
+// เลือกธนาคารแล้ว → ถอดรหัส PDF (ถ้าตั้งไว้ใน PDF_PASSWORDS) → แปลงเป็นรูป → ให้ Gemini ถอดรายการ
+// ขั้นนี้ช้าสุด (แปลงรูป + เรียก AI หลายหน้า) จึงต่อ loading ยาว + ตอบผลด้วย push (กัน reply token หมดอายุ)
+async function handleImportBank(event, data) {
+  const userId = event.source.userId;
+  const token = data.get('token');
+  const bank = data.get('bank');
+  const row = token && db.prepare(`SELECT * FROM pending_import WHERE token = ?`).get(token);
+  if (!row || row.status !== 'await_bank') {
+    return reply(event.replyToken, 'รายการนำเข้านี้หมดอายุแล้ว ส่งไฟล์ใหม่อีกครั้งค่ะ');
+  }
+
+  await showLoading(userId, 60);
+  const bankLabel = BANKS.find((b) => b.key === bank)?.label || null;
+
+  let transactions;
+  try {
+    const buffer = fs.readFileSync(row.file_path);
+    const images = await renderPdfToImages(buffer, PDF_PASSWORDS[bank] || null);
+    if (images.length === 0) {
+      cleanupImport(row);
+      return push(userId, 'เปิด PDF ไม่ได้หรือไม่มีหน้าให้อ่าน ลองส่งไฟล์ใหม่ค่ะ');
+    }
+    transactions = await extractStatement(images, bankLabel);
+  } catch (err) {
+    console.error('handleImportBank error:', err);
+    cleanupImport(row);
+    if (err.code === 'PDF_DECRYPT_FAILED') {
+      return push(userId, `ถอดรหัส PDF ไม่สำเร็จ — ตรวจรหัสผ่านของ ${bankLabel || bank} ใน PDF_PASSWORDS อีกครั้งค่ะ`);
+    }
+    if (err.code === 'PDF_MAYBE_ENCRYPTED') {
+      return push(userId, `PDF นี้น่าจะติดรหัสผ่าน แต่ยังไม่ได้ตั้งรหัสของ ${bankLabel || bank} ไว้ใน PDF_PASSWORDS ค่ะ`);
+    }
+    return push(userId, 'อ่าน statement ไม่สำเร็จ ลองใหม่อีกครั้งค่ะ');
+  }
+
+  if (transactions.length === 0) {
+    cleanupImport(row);
+    return push(userId, 'อ่านไฟล์แล้วแต่ไม่พบรายการธุรกรรม ลองเลือกธนาคารให้ตรง หรือส่งไฟล์ที่ชัดกว่านี้ค่ะ');
+  }
+
+  db.prepare(
+    `UPDATE pending_import SET bank = ?, transactions = ?, status = 'await_review' WHERE token = ?`
+  ).run(bank, JSON.stringify(transactions), token);
+
+  // โชว์รายการที่อ่านได้ทั้งหมดให้ตรวจก่อน แล้วค่อยกดยืนยันไปเลือกบัญชี (ขั้นนี้ผลมาช้าใช้ push)
+  return push(userId, {
+    type: 'flex',
+    altText: `พบ ${transactions.length} รายการ — ตรวจแล้วกดยืนยัน`,
+    contents: buildImportPreviewCarousel(token, transactions),
+  });
+}
+
+// ยืนยันรายการแล้ว → ไปเลือกบัญชีปลายทาง
+async function handleImportReview(event, data) {
+  const token = data.get('token');
+  const row = token && db.prepare(`SELECT * FROM pending_import WHERE token = ?`).get(token);
+  if (!row || row.status !== 'await_review') {
+    return reply(event.replyToken, 'รายการนำเข้านี้หมดอายุแล้ว ส่งไฟล์ใหม่อีกครั้งค่ะ');
+  }
+
+  await showLoading(event.source.userId, 60); // getAccounts ครั้งแรกจะ trigger actual.init()+downloadBudget อาจช้า
+  const accounts = (await actual.getAccounts()).filter((a) => !a.closed);
+  if (accounts.length === 0) {
+    cleanupImport(row);
+    return reply(event.replyToken, 'ยังไม่มีบัญชีใน Actual Budget ให้เลือกนำเข้า');
+  }
+
+  db.prepare(`UPDATE pending_import SET status = 'await_account' WHERE token = ?`).run(token);
+  const transactions = JSON.parse(row.transactions);
+
+  return client.replyMessage({
+    replyToken: event.replyToken,
+    messages: [
+      {
+        type: 'flex',
+        altText: 'เลือกบัญชีที่จะนำเข้า',
+        contents: buildImportAccountPickerBubble(token, transactions, accounts),
+      },
+    ],
+  });
+}
+
+// เลือกบัญชีแล้ว → บันทึกทุกรายการเข้า Actual ในบัญชีนั้นทันที (แปลง direction เป็นยอด +/-)
+async function handleImportAccount(event, data) {
+  const token = data.get('token');
+  const accountId = data.get('accountId');
+  const row = token && db.prepare(`SELECT * FROM pending_import WHERE token = ?`).get(token);
+  if (!row || row.status !== 'await_account') {
+    return reply(event.replyToken, 'รายการนำเข้านี้หมดอายุหรือถูกบันทึกไปแล้วค่ะ');
+  }
+
+  await showLoading(event.source.userId, 60); // บันทึกหลายรายการเข้า Actual อาจใช้เวลาหลายวินาที
+  const transactions = JSON.parse(row.transactions);
+  const categories = await actual.getCategories();
+  const txs = transactions.map((t) => {
+    const isIncome = t.direction === 'income';
+    const amount = isIncome ? Math.abs(t.amount) : -Math.abs(t.amount);
+    const category = guessCategory(t.description, categories, isIncome);
+    return {
+      date: t.date || undefined,
+      amount,
+      payee: extractPayee(t.description), // ชื่อร้านที่ทำความสะอาดแล้ว (ตัด gateway/location/เลขอ้างอิง)
+      category: category?.id,
+      notes: t.description, // เก็บรายละเอียดดิบเต็มไว้ใน notes
+    };
+  });
+
+  try {
+    await actual.addTransactions(accountId, txs);
+  } catch (err) {
+    console.error('handleImportAccount addTransactions error:', err);
+    return reply(event.replyToken, 'บันทึกรายการไม่สำเร็จ ลองใหม่อีกครั้งค่ะ');
+  }
+
+  cleanupImport(row); // ใช้ครั้งเดียว ลบไฟล์ + รายการค้าง กดซ้ำจะขึ้นหมดอายุ
+  const accountName = (await actual.getAccounts()).find((a) => a.id === accountId)?.name || accountId;
+  const net = txs.reduce((s, t) => s + t.amount, 0);
+  return reply(
+    event.replyToken,
+    `นำเข้าเรียบร้อย ${txs.length} รายการ\nบัญชี: ${accountName}\nยอดสุทธิ: ${net.toLocaleString('en-US')} บาท`
+  );
+}
+
+async function handleImportCancel(event, data) {
+  const token = data.get('token');
+  const row = token && db.prepare(`SELECT * FROM pending_import WHERE token = ?`).get(token);
+  if (row) cleanupImport(row);
+  return reply(event.replyToken, 'ยกเลิกการนำเข้าแล้วค่ะ');
+}
+
+// เลือกสีตัวอักษร (ขาว/ดำ) ให้ตัดกับพื้นหลังชัดสุด ด้วยค่าความสว่าง YIQ — สีอ่อน(เหลือง)ได้ตัวดำ, สีเข้มได้ตัวขาว
+function textColorFor(bg) {
+  const hex = (bg || '').replace('#', '');
+  if (hex.length !== 6) return '#FFFFFF';
+  const r = parseInt(hex.slice(0, 2), 16);
+  const g = parseInt(hex.slice(2, 4), 16);
+  const b = parseInt(hex.slice(4, 6), 16);
+  const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+  return yiq >= 150 ? '#1A1A1A' : '#FFFFFF';
+}
+
+// Flex: เลือกธนาคารของ statement — แต่ละธนาคารเป็น box กดได้ ผูก postback imp_bank
+// พื้นหลังใช้สีประจำธนาคาร (b.color) ตัวอักษรเลือกขาว/ดำอัตโนมัติให้ตัดกับพื้นหลัง
+function buildBankPickerBubble(token, fileName) {
+  const bankRows = BANKS.map((b) => ({
+    type: 'box',
+    layout: 'horizontal',
+    paddingAll: 'md',
+    cornerRadius: 'md',
+    backgroundColor: b.color || '#6B7280',
+    margin: 'sm',
+    action: {
+      type: 'postback',
+      data: `action=imp_bank&token=${token}&bank=${b.key}`,
+      displayText: `ธนาคาร: ${b.label}`,
+    },
+    contents: [
+      { type: 'text', text: b.label, wrap: true, weight: 'bold', color: textColorFor(b.color), size: 'sm' },
+    ],
+  }));
+
+  return {
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        { type: 'text', text: 'นำเข้า statement', weight: 'bold', size: 'lg' },
+        { type: 'text', text: fileName, size: 'sm', color: '#8A8A8A', wrap: true },
+        { type: 'separator', margin: 'lg' },
+        { type: 'text', text: 'เลือกธนาคารของ statement นี้', size: 'sm', color: '#8A8A8A', margin: 'md' },
+        ...bankRows,
+      ],
+    },
+  };
+}
+
+// Flex: เลือกบัญชีปลายทางหลังถอดรายการได้แล้ว — คล้าย buildAccountPickerBubble แต่ผูก postback imp_account
+function buildImportAccountPickerBubble(token, transactions, accounts) {
+  const accountRows = accounts.slice(0, 20).map((a) => ({
+    type: 'box',
+    layout: 'horizontal',
+    paddingAll: 'md',
+    cornerRadius: 'md',
+    backgroundColor: '#F3F6F9',
+    margin: 'sm',
+    action: {
+      type: 'postback',
+      data: `action=imp_account&token=${token}&accountId=${encodeURIComponent(a.id)}`,
+      displayText: `เลือกบัญชี: ${a.name}`,
+    },
+    contents: [{ type: 'text', text: a.name, wrap: true, weight: 'bold', color: '#1F6FEB', size: 'sm' }],
+  }));
+
+  return {
+    type: 'bubble',
+    body: {
+      type: 'box',
+      layout: 'vertical',
+      spacing: 'md',
+      contents: [
+        { type: 'text', text: `พบ ${transactions.length} รายการ`, weight: 'bold', size: 'lg' },
+        { type: 'text', text: 'เลือกบัญชีที่จะนำเข้ารายการทั้งหมด', size: 'sm', color: '#8A8A8A', wrap: true },
+        { type: 'separator', margin: 'lg' },
+        ...accountRows,
+      ],
+    },
+  };
+}
+
+const IMPORT_DESC_MAX = 100; // ตัดรายละเอียดยาวเกิน 100 ตัวอักษรแล้วต่อ … (ตามที่ผู้ใช้ขอ)
+function fmtAmount(n) {
+  return Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// แถวธุรกรรม 1 รายการใน Flex: วันที่ + รายละเอียด(ตัด) + ยอด (สีเขียวรับเข้า/แดงจ่ายออก)
+function previewRow(t) {
+  const isIncome = t.direction === 'income';
+  const desc =
+    t.description.length > IMPORT_DESC_MAX ? t.description.slice(0, IMPORT_DESC_MAX) + '…' : t.description;
+  return {
+    type: 'box',
+    layout: 'horizontal',
+    margin: 'md',
+    spacing: 'sm',
+    contents: [
+      { type: 'text', text: t.date || '-', size: 'xxs', color: '#8A8A8A', flex: 3, gravity: 'top' },
+      { type: 'text', text: desc, size: 'xs', wrap: true, flex: 7, gravity: 'top' },
+      {
+        type: 'text',
+        text: `${isIncome ? '+' : '-'}${fmtAmount(t.amount)}`,
+        size: 'xs',
+        align: 'end',
+        weight: 'bold',
+        color: isIncome ? '#17803D' : '#D93025',
+        flex: 4,
+        gravity: 'top',
+      },
+    ],
+  };
+}
+
+// Flex carousel: โชว์รายการที่ AI อ่านได้ "ทุกรายการ" ให้ตรวจก่อน แล้วกดยืนยันไปเลือกบัญชี
+// แบ่งเป็นหลาย bubble (LINE จำกัด ~50KB/ข้อความ และ 12 bubble/carousel) — ทุก bubble มีปุ่มยืนยัน/ยกเลิก
+// สรุปยอดสุทธิอยู่หัวทุก bubble เพื่อให้ยืนยันจาก bubble ไหนก็ได้ ไม่ต้องปัดไปหน้าสุดท้าย
+function buildImportPreviewCarousel(token, transactions) {
+  // จำกัดให้ JSON ทั้งข้อความไม่เกิน limit ~50KB ของ Flex (worst case desc 100 ตัวอักษร ~84 แถว ≈ 40KB)
+  // แถวที่เกินยังถูกนำเข้าครบ (import จาก transactions เต็ม) แค่ไม่โชว์ในพรีวิว — โชว์เป็นหมายเหตุแทน
+  const ROWS_PER_BUBBLE = 12;
+  const MAX_BUBBLES = 7;
+  const total = transactions.length;
+  const net = transactions.reduce(
+    (s, t) => s + (t.direction === 'income' ? Math.abs(t.amount) : -Math.abs(t.amount)),
+    0
+  );
+
+  const chunks = [];
+  for (let i = 0; i < transactions.length; i += ROWS_PER_BUBBLE) {
+    chunks.push(transactions.slice(i, i + ROWS_PER_BUBBLE));
+  }
+  const shown = chunks.slice(0, MAX_BUBBLES);
+  const hiddenCount = total - shown.reduce((s, c) => s + c.length, 0); // รายการที่เกิน 12 bubble (จะนำเข้าครบอยู่ดี)
+
+  const bubbles = shown.map((chunk, idx) => {
+    const startNo = idx * ROWS_PER_BUBBLE + 1;
+    const endNo = startNo + chunk.length - 1;
+    const isLast = idx === shown.length - 1;
+    return {
+      type: 'bubble',
+      size: 'mega',
+      header: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'xs',
+        contents: [
+          {
+            type: 'box',
+            layout: 'horizontal',
+            contents: [
+              { type: 'text', text: `พบ ${total} รายการ`, weight: 'bold', size: 'md', flex: 5 },
+              {
+                type: 'text',
+                text: `สุทธิ ${net >= 0 ? '+' : '-'}${fmtAmount(net)}`,
+                size: 'sm',
+                weight: 'bold',
+                align: 'end',
+                color: net >= 0 ? '#17803D' : '#D93025',
+                flex: 5,
+              },
+            ],
+          },
+          { type: 'text', text: `รายการที่ ${startNo}–${endNo}`, size: 'xs', color: '#8A8A8A' },
+        ],
+      },
+      body: {
+        type: 'box',
+        layout: 'vertical',
+        spacing: 'none',
+        contents: [
+          ...chunk.map(previewRow),
+          ...(isLast && hiddenCount > 0
+            ? [
+                { type: 'separator', margin: 'md' },
+                {
+                  type: 'text',
+                  text: `… ซ่อนอีก ${hiddenCount} รายการ (จะนำเข้าครบทั้งหมด)`,
+                  size: 'xs',
+                  color: '#8A8A8A',
+                  margin: 'md',
+                  wrap: true,
+                },
+              ]
+            : []),
+        ],
+      },
+      footer: {
+        type: 'box',
+        layout: 'horizontal',
+        spacing: 'sm',
+        contents: [
+          {
+            type: 'button',
+            style: 'secondary',
+            height: 'sm',
+            action: {
+              type: 'postback',
+              label: 'ยกเลิก',
+              data: `action=imp_cancel&token=${token}`,
+              displayText: 'ยกเลิก',
+            },
+          },
+          {
+            type: 'button',
+            style: 'primary',
+            height: 'sm',
+            color: '#17803D',
+            action: {
+              type: 'postback',
+              label: 'ยืนยันรายการ',
+              data: `action=imp_review&token=${token}`,
+              displayText: 'ยืนยันรายการ',
+            },
+          },
+        ],
+      },
+    };
+  });
+
+  return { type: 'carousel', contents: bubbles };
+}
+
+// ลบไฟล์ PDF ต้นฉบับ + รายการค้างใน DB (เรียกตอนยืนยัน/ยกเลิก/error)
+function cleanupImport(row) {
+  if (row.file_path) fs.rmSync(row.file_path, { force: true });
+  db.prepare(`DELETE FROM pending_import WHERE token = ?`).run(row.token);
+}
+
+// เก็บกวาดรายการนำเข้าค้างเกิน 1 วัน (ผู้ใช้ส่งไฟล์แล้วไม่ทำต่อ) พร้อมลบไฟล์ PDF ที่ค้างบนดิสก์
+function sweepStaleImports() {
+  const stale = db
+    .prepare(`SELECT * FROM pending_import WHERE created_at < datetime('now', '-1 day')`)
+    .all();
+  for (const row of stale) cleanupImport(row);
 }
 
 async function reply(replyToken, text) {
   return client.replyMessage({ replyToken, messages: [{ type: 'text', text }] });
+}
+
+// ส่งข้อความแบบ push (ไม่ผูก reply token) — ใช้กับผลลัพธ์ที่ประมวลผลนานจน reply token อาจหมดอายุ
+async function push(userId, message) {
+  const messages = typeof message === 'string' ? [{ type: 'text', text: message }] : [message];
+  return client.pushMessage({ to: userId, messages });
 }
 
 const port = process.env.PORT || 3000;

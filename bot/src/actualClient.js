@@ -31,6 +31,23 @@ async function addTransaction({ accountId, amount, payee, category, date, notes 
   ]);
 }
 
+// เพิ่มหลายรายการพร้อมกัน (นำเข้าจาก statement PDF) — txs: [{ date, amount, payee, category, notes }]
+// amount เป็นบาท (มีเครื่องหมาย +/- แล้ว) แปลงเป็นสตางค์ให้ตรงกับที่ Actual เก็บ
+async function addTransactions(accountId, txs) {
+  await init();
+  const today = new Date().toISOString().slice(0, 10);
+  return actualApi.addTransactions(
+    accountId,
+    txs.map((t) => ({
+      date: t.date || today,
+      amount: Math.round(t.amount * 100),
+      payee_name: t.payee,
+      category: t.category,
+      notes: t.notes,
+    }))
+  );
+}
+
 async function getAccounts() {
   await init();
   return actualApi.getAccounts();
@@ -69,6 +86,7 @@ async function getAccountBalance(accountId, asOfDate) {
 module.exports = {
   init,
   addTransaction,
+  addTransactions,
   getAccounts,
   getCategories,
   getCategoryBudget,
