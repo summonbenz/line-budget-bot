@@ -68,6 +68,25 @@ export function thaiDate(date: string): string {
 	return `${days[dt.getDay()]} ${d} ${THAI_MONTHS_SHORT[m - 1]}${yearSuffix}`;
 }
 
+/** วันครบกำหนดชำระรอบถัดไปจาก due day (1-31) → '20 ก.ค. 69' (พ.ศ. 2 หลัก) */
+export function nextDueDate(dueDay: number): string {
+	const today = new Date();
+	let y = today.getFullYear();
+	let m = today.getMonth();
+	// วันเกิน 28-31 อาจไม่มีในบางเดือน — ปัดลงเป็นวันสุดท้ายของเดือนนั้นแทน
+	const clampDay = (yy: number, mm: number) => Math.min(dueDay, new Date(yy, mm + 1, 0).getDate());
+	let day = clampDay(y, m);
+	if (day < today.getDate()) {
+		m += 1;
+		if (m > 11) {
+			m = 0;
+			y += 1;
+		}
+		day = clampDay(y, m);
+	}
+	return `${day} ${THAI_MONTHS_SHORT[m]} ${(y + 543) % 100}`;
+}
+
 /** Date → 'YYYY-MM-DD' ตามเวลาท้องถิ่น (ไม่ใช่ UTC) */
 export function localDateString(d: Date): string {
 	return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

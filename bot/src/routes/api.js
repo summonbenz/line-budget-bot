@@ -174,20 +174,26 @@ router.get('/accounts', async (req, res) => {
     const accounts = await actual.getAccounts();
     // credit_limit ใน SQLite เก็บหน่วยบาท (REAL) — แปลงเป็นสตางค์ให้ตรงกับยอดอื่นๆ ใน API
     const cardRows = db
-      .prepare(`SELECT actual_account_id, credit_limit FROM cards WHERE actual_account_id IS NOT NULL`)
+      .prepare(
+        `SELECT actual_account_id, credit_limit, due_day FROM cards WHERE actual_account_id IS NOT NULL`
+      )
       .all();
-    const limits = new Map(cardRows.map((r) => [r.actual_account_id, r.credit_limit]));
+    const cardInfo = new Map(cardRows.map((r) => [r.actual_account_id, r]));
 
     const open = accounts.filter((a) => !a.closed);
     const withBalance = await Promise.all(
-      open.map(async (a) => ({
-        id: a.id,
-        name: a.name,
-        offBudget: !!a.offbudget,
-        isCard: limits.has(a.id),
-        creditLimit: limits.get(a.id) != null ? Math.round(limits.get(a.id) * 100) : null,
-        balance: await actual.getAccountBalance(a.id),
-      }))
+      open.map(async (a) => {
+        const info = cardInfo.get(a.id);
+        return {
+          id: a.id,
+          name: a.name,
+          offBudget: !!a.offbudget,
+          isCard: !!info,
+          creditLimit: info?.credit_limit != null ? Math.round(info.credit_limit * 100) : null,
+          dueDay: info?.due_day ?? null,
+          balance: await actual.getAccountBalance(a.id),
+        };
+      })
     );
 
     res.json({ accounts: withBalance });
@@ -203,12 +209,16 @@ router.get('/accounts', async (req, res) => {
 router.put('/cards/:accountId', async (req, res) => {
   try {
     const { accountId } = req.params;
-    const { creditLimit } = req.body || {};
+    const { creditLimit, dueDay } = req.body || {};
     if (
       creditLimit !== null &&
       (typeof creditLimit !== 'number' || !Number.isFinite(creditLimit) || creditLimit < 0)
     ) {
       return res.status(400).json({ error: 'creditLimit must be a non-negative number or null' });
+    }
+    const dueDayValue = dueDay ?? null; // วันครบกำหนดชำระ (1-31) — ไม่บังคับ
+    if (dueDayValue !== null && (!Number.isInteger(dueDayValue) || dueDayValue < 1 || dueDayValue > 31)) {
+      return res.status(400).json({ error: 'dueDay must be an integer 1-31 or null' });
     }
 
     const accounts = await actual.getAccounts();
@@ -219,15 +229,13 @@ router.put('/cards/:accountId', async (req, res) => {
 
     const existing = db.prepare(`SELECT id FROM cards WHERE actual_account_id = ?`).get(accountId);
     if (existing) {
-      db.prepare(`UPDATE cards SET credit_limit = ?, name = ? WHERE actual_account_id = ?`).run(
-        creditLimit,
-        account.name,
-        accountId
-      );
+      db.prepare(
+        `UPDATE cards SET credit_limit = ?, due_day = ?, name = ? WHERE actual_account_id = ?`
+      ).run(creditLimit, dueDayValue, account.name, accountId);
     } else {
       db.prepare(
-        `INSERT INTO cards (line_user_id, name, actual_account_id, credit_limit) VALUES (?, ?, ?, ?)`
-      ).run(req.lineUserId, account.name, accountId, creditLimit);
+        `INSERT INTO cards (line_user_id, name, actual_account_id, credit_limit, due_day) VALUES (?, ?, ?, ?, ?)`
+      ).run(req.lineUserId, account.name, accountId, creditLimit, dueDayValue);
     }
 
     res.json({ ok: true });

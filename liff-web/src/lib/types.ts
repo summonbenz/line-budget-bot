@@ -7,6 +7,7 @@ export interface Account {
 	offBudget: boolean;
 	balance: number;
 	creditLimit: number | null; // วงเงินบัตร (สตางค์) — null = ยังไม่ได้ตั้ง
+	dueDay: number | null; // วันครบกำหนดชำระ (1-31) — null = ยังไม่ได้ตั้ง
 }
 
 export interface AccountsResponse {

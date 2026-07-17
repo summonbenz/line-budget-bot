@@ -58,9 +58,16 @@ export function addTransaction(tx: NewTransaction): Promise<void> {
 	return apiFetch<void>('/api/transactions', { method: 'POST', body: tx });
 }
 
-/** ตั้ง/แก้วงเงินบัตรเครดิต — creditLimit หน่วยบาท (ฝั่ง bot เก็บบาทลง SQLite ตรงๆ) */
-export function setCardLimit(accountId: string, creditLimit: number): Promise<void> {
-	return apiFetch<void>(`/api/cards/${accountId}`, { method: 'PUT', body: { creditLimit } });
+/** ตั้ง/แก้วงเงิน + วันครบกำหนดชำระของบัตร — creditLimit หน่วยบาท (ฝั่ง bot เก็บบาทลง SQLite ตรงๆ) */
+export function setCardLimit(
+	accountId: string,
+	creditLimit: number,
+	dueDay: number | null = null
+): Promise<void> {
+	return apiFetch<void>(`/api/cards/${accountId}`, {
+		method: 'PUT',
+		body: { creditLimit, dueDay }
+	});
 }
 
 export function getCategories(): Promise<CategoriesResponse> {
