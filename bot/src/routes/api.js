@@ -1,6 +1,7 @@
 // API สำหรับ LIFF dashboard เท่านั้น — ทุก route ผ่าน verifyLiffUser ก่อนเสมอ
 
 const express = require('express');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const actual = require('../actualClient');
@@ -344,11 +345,45 @@ async function resolveActualTx(row) {
   return tx;
 }
 
+// หา/สร้างแถว tx_entries จาก :id — รองรับทั้ง entry id (เปิดจากปุ่มบนการ์ดในแชท)
+// และ id ธุรกรรมฝั่ง Actual (เปิดจากหน้ารายการใน LIFF ซึ่งลิสต์มาจาก Actual ตรงๆ)
+// รายการที่ไม่ได้จดผ่านบอท (นำเข้า statement / เพิ่มใน Actual เอง) จะถูกสร้าง entry ให้อัตโนมัติ
+// โดย occurred_at ใส่แค่วันที่ (ไม่รู้เวลา — GET จะคืน time เป็น null ให้หน้าเว็บ default เอง)
+async function findOrCreateEntry(id, accountIdHint) {
+  let row = db.prepare(`SELECT * FROM tx_entries WHERE id = ?`).get(id);
+  if (row) return row;
+  row = db.prepare(`SELECT * FROM tx_entries WHERE actual_tx_id = ?`).get(id);
+  if (row) return row;
+
+  // ไม่ใช่ entry ฝั่งเรา → ลองตีความเป็น id ธุรกรรมของ Actual (accountIdHint ช่วยให้ไม่ต้องไล่ทุกบัญชี)
+  let tx = null;
+  let accountId = accountIdHint || null;
+  if (accountId) {
+    tx = await actual.getTransactionById(accountId, id);
+  } else {
+    for (const a of await actual.getAccounts()) {
+      tx = await actual.getTransactionById(a.id, id);
+      if (tx) {
+        accountId = a.id;
+        break;
+      }
+    }
+  }
+  if (!tx) return null;
+
+  const entryId = crypto.randomBytes(9).toString('hex');
+  db.prepare(
+    `INSERT INTO tx_entries (id, actual_tx_id, account_id, occurred_at, slip_path) VALUES (?, ?, ?, ?, NULL)`
+  ).run(entryId, tx.id, accountId, tx.date);
+  return db.prepare(`SELECT * FROM tx_entries WHERE id = ?`).get(entryId);
+}
+
 // ข้อมูลรายการเดียวสำหรับหน้าแก้ไข /app/edit/{id} — ยอด/หมวด/วันที่ยึดจาก Actual เป็นหลัก
 // (เผื่อผู้ใช้ไปแก้จากหน้าเว็บ Actual เอง) ส่วนเวลา + สลิปอยู่ฝั่ง SQLite
+// หมายเหตุ: id ที่คืน (field `id`) คือ entry id เสมอ — หน้าเว็บต้องใช้ค่านี้ยิง PUT/DELETE/slip ต่อ
 router.get('/tx/:id', async (req, res) => {
   try {
-    const row = db.prepare(`SELECT * FROM tx_entries WHERE id = ?`).get(req.params.id);
+    const row = await findOrCreateEntry(req.params.id, req.query.accountId);
     if (!row) return res.status(404).json({ error: 'entry not found' });
 
     const tx = await resolveActualTx(row);

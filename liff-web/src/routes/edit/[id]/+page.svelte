@@ -15,7 +15,12 @@
 	import { markDataChanged } from '$lib/store.svelte';
 	import type { Category, TxEntry } from '$lib/types';
 
-	const entryId = page.params.id!;
+	// param อาจเป็น entry id (เปิดจากปุ่มในแชท) หรือ id ธุรกรรม Actual (เปิดจากแท็บรายการ)
+	// หลังโหลดแล้วให้ใช้ entry.id (entry id จริง) ยิง update/delete/slip เสมอ
+	const idParam = page.params.id!;
+	const accountIdHint = page.url.searchParams.get('accountId') ?? undefined;
+	// back=list → เข้ามาจากแท็บรายการ ตอนปิดให้กลับไปที่แท็บเดิมแทนการปิดหน้าต่าง
+	const backToList = page.url.searchParams.get('back') === 'list';
 
 	let entry = $state<TxEntry | null>(null);
 	let categories = $state<Category[]>([]);
@@ -42,7 +47,7 @@
 	async function load() {
 		try {
 			await ensureLiffReady();
-			const [e, catRes] = await Promise.all([getTxEntry(entryId), getCategories()]);
+			const [e, catRes] = await Promise.all([getTxEntry(idParam, accountIdHint), getCategories()]);
 			entry = e;
 			categories = catRes.categories;
 
@@ -53,7 +58,7 @@
 			date = e.date;
 			time = e.time ?? '12:00';
 
-			if (e.hasSlip) slipUrl = await getTxSlipUrl(entryId);
+			if (e.hasSlip) slipUrl = await getTxSlipUrl(e.id);
 		} catch (err) {
 			console.error(err);
 			if (err instanceof UnauthorizedError) {
@@ -99,7 +104,15 @@
 	}
 
 	function closeOrHome() {
-		if (!closeLiffWindow()) goto(`${base}/`);
+		// เข้ามาจากแท็บรายการ → กลับไปแท็บรายการ (อย่าปิดหน้าต่าง เดี๋ยวหลุดจากแดชบอร์ดทั้งอัน)
+		if (backToList) {
+			goto(`${base}/?tab=transactions`);
+			return;
+		}
+		const closing = closeLiffWindow();
+		// ใน "LINE in-app browser" (เปิดจากลิงก์ https ตรงๆ ไม่ใช่ liff.line.me) closeWindow()
+		// จะเงียบเฉยๆ ทั้งที่ isInClient() คืน true — ถ้าหน้ายังไม่ถูกปิดจริงให้กลับหน้าแรกแทน
+		setTimeout(() => goto(`${base}/`), closing ? 600 : 0);
 	}
 
 	async function save() {
@@ -107,7 +120,7 @@
 		saving = true;
 		error = '';
 		try {
-			await updateTxEntry(entryId, {
+			await updateTxEntry(entry!.id, {
 				amount: type === 'expense' ? -amountValue : amountValue,
 				payee: payee.trim() || undefined,
 				categoryId: categoryId || null,
@@ -135,7 +148,7 @@
 		deleting = true;
 		error = '';
 		try {
-			await deleteTxEntry(entryId);
+			await deleteTxEntry(entry.id);
 			markDataChanged();
 			closeOrHome();
 		} catch (err) {
@@ -150,7 +163,30 @@
 	<header
 		class="sticky top-0 z-10 flex items-center justify-between border-b border-stone-200 bg-stone-100/95 px-4 pt-4 pb-3 backdrop-blur"
 	>
-		<h1 class="text-lg font-bold text-stone-900">แก้ไขรายการ</h1>
+		<div class="flex items-center gap-2">
+			{#if backToList}
+				<!-- เข้ามาจากแท็บรายการ → มีปุ่มย้อนกลับไปแท็บเดิมโดยไม่บันทึกอะไร -->
+				<button
+					type="button"
+					class="-ml-1.5 flex h-9 w-9 items-center justify-center rounded-xl text-stone-600 transition-colors active:bg-stone-200"
+					onclick={() => goto(`${base}/?tab=transactions`)}
+					aria-label="กลับไปหน้ารายการ"
+				>
+					<svg
+						viewBox="0 0 24 24"
+						class="h-6 w-6"
+						fill="none"
+						stroke="currentColor"
+						stroke-width="2"
+						stroke-linecap="round"
+						stroke-linejoin="round"
+					>
+						<path d="M15 5l-7 7 7 7" />
+					</svg>
+				</button>
+			{/if}
+			<h1 class="text-lg font-bold text-stone-900">แก้ไขรายการ</h1>
+		</div>
 		{#if entry}
 			<button
 				type="button"

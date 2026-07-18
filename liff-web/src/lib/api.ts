@@ -86,9 +86,15 @@ export function getCashflow(months = 6): Promise<CashflowResponse> {
 	return apiFetch<CashflowResponse>(`/api/cashflow?months=${months}`);
 }
 
-/** รายการเดียวสำหรับหน้าแก้ไข /edit/{id} (id = tx_entries.id ฝั่ง bot) */
-export function getTxEntry(id: string): Promise<TxEntry> {
-	return apiFetch<TxEntry>(`/api/tx/${id}`);
+/**
+ * รายการเดียวสำหรับหน้าแก้ไข /edit/{id} — id รับได้ทั้ง entry id (จากปุ่มในแชท)
+ * และ id ธุรกรรมฝั่ง Actual (จากแท็บรายการ — ฝั่ง bot จะสร้าง entry ให้อัตโนมัติ)
+ * accountId ใส่มาด้วยถ้ารู้ เพื่อให้ฝั่ง bot ไม่ต้องไล่หาทุกบัญชี
+ * ค่า id ใน response คือ entry id เสมอ — ใช้ค่านั้นสำหรับ update/delete/slip ต่อ
+ */
+export function getTxEntry(id: string, accountId?: string): Promise<TxEntry> {
+	const qs = accountId ? `?accountId=${encodeURIComponent(accountId)}` : '';
+	return apiFetch<TxEntry>(`/api/tx/${id}${qs}`);
 }
 
 export function updateTxEntry(id: string, body: TxEntryUpdate): Promise<void> {

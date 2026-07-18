@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { getAccounts, getTransactions, UnauthorizedError } from '$lib/api';
 	import { appState } from '$lib/store.svelte';
 	import { baht, thaiDate } from '$lib/format';
@@ -75,6 +77,12 @@
 		{ id: 'income', label: 'รายรับ' },
 		{ id: 'expense', label: 'รายจ่าย' }
 	] as const;
+
+	// เปิดหน้าแก้ไขของรายการ — ส่ง id ธุรกรรม Actual ไปตรงๆ (ฝั่ง bot จับคู่/สร้าง entry ให้เอง)
+	// accountId ช่วยให้ bot ไม่ต้องไล่หาทุกบัญชี, back=list ให้หน้าแก้ไขเด้งกลับแท็บนี้ตอนเสร็จ
+	function openEdit(tx: Transaction) {
+		goto(`${base}/edit/${tx.id}?accountId=${encodeURIComponent(tx.accountId)}&back=list`);
+	}
 </script>
 
 <header
@@ -155,22 +163,28 @@
 					</div>
 					<ul class="divide-y divide-stone-100 overflow-hidden rounded-2xl bg-white shadow-sm">
 						{#each group.items as tx (tx.id)}
-							<li class="flex items-center justify-between gap-3 px-4 py-3">
-								<div class="min-w-0">
-									<p class="truncate text-sm text-stone-800">
-										{tx.payee ?? tx.notes ?? '(ไม่ระบุ)'}
-									</p>
-									<p class="mt-0.5 truncate text-[11px] text-stone-400">
-										{[tx.category, tx.accountName].filter(Boolean).join(' • ') || '—'}
-									</p>
-								</div>
-								<span
-									class="tabular shrink-0 text-sm font-semibold {tx.amount < 0
-										? 'text-stone-800'
-										: 'text-emerald-700'}"
+							<li>
+								<button
+									type="button"
+									class="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition-colors active:bg-stone-100"
+									onclick={() => openEdit(tx)}
 								>
-									{tx.amount < 0 ? '−' : '+'}฿{baht(Math.abs(tx.amount))}
-								</span>
+									<div class="min-w-0">
+										<p class="truncate text-sm text-stone-800">
+											{tx.payee ?? tx.notes ?? '(ไม่ระบุ)'}
+										</p>
+										<p class="mt-0.5 truncate text-[11px] text-stone-400">
+											{[tx.category, tx.accountName].filter(Boolean).join(' • ') || '—'}
+										</p>
+									</div>
+									<span
+										class="tabular shrink-0 text-sm font-semibold {tx.amount < 0
+											? 'text-stone-800'
+											: 'text-emerald-700'}"
+									>
+										{tx.amount < 0 ? '−' : '+'}฿{baht(Math.abs(tx.amount))}
+									</span>
+								</button>
 							</li>
 						{/each}
 					</ul>

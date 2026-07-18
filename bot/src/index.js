@@ -48,9 +48,19 @@ const SLIP_DIR = path.join(__dirname, '..', 'data', 'slips');
 fs.mkdirSync(SLIP_DIR, { recursive: true });
 
 // ลิงก์หน้าแก้ไขรายการใน LIFF web — ปุ่ม "แก้ไข" บนการ์ดจดสำเร็จ
-// LINE บังคับ uri action เป็น https เท่านั้น ถ้าไม่ได้ตั้ง DOMAIN ไว้จะไม่แสดงปุ่ม
+// ต้องเปิดผ่าน LIFF permanent link (liff.line.me/{LIFF_ID}/...) เพื่อให้ LINE ใช้ "LIFF browser"
+// ถ้าเปิดเป็น https URL ตรงๆ LINE จะใช้ in-app browser ซึ่ง liff.closeWindow() ปิดหน้าต่างไม่ได้
+// (แถม liff.isInClient() ยังคืน true ทำให้ฝั่งเว็บ fallback ไม่ทำงานด้วย)
+const LIFF_ID = process.env.LIFF_ID || null;
 const APP_BASE_URL =
   process.env.APP_BASE_URL || (process.env.DOMAIN ? `https://${process.env.DOMAIN}` : null);
+
+// คืน URL หน้าแก้ไขของ entry — ไม่มีทั้ง LIFF_ID/DOMAIN คืน null (การ์ดจะไม่มีปุ่มแก้ไข)
+function editPageUrl(entryId) {
+  if (LIFF_ID) return `https://liff.line.me/${LIFF_ID}/edit/${entryId}`;
+  if (APP_BASE_URL) return `${APP_BASE_URL}/app/edit/${entryId}`;
+  return null;
+}
 
 // ภาพจิยุมุมหัวการ์ด "นำเข้าสำเร็จ" ให้เข้าชุดกับการ์ดจดรายการเดี่ยว — ตั้ง URL รูป (https) ใน .env
 // ถ้าไม่ตั้งไว้ก็ยังทำงานได้ แค่ไม่มีรูป (ต้องเป็น URL สาธารณะ https เท่านั้นตามข้อกำหนด Flex image)
@@ -705,7 +715,7 @@ function buildImportDoneBubble(txs, accountName) {
 }
 
 // Flex: การ์ด "จดสำเร็จ" ของการเพิ่มรายการเดี่ยว (พิมพ์ข้อความ/สลิป/QR) — ธีมจิยุเดียวกับการ์ดนำเข้า
-// entryId (ถ้ามี) → มีปุ่ม "แก้ไขรายการ" เปิดหน้าแก้ไขใน LIFF web ({APP_BASE_URL}/app/edit/{id})
+// entryId (ถ้ามี) → มีปุ่ม "แก้ไขรายการ" เปิดหน้าแก้ไขใน LIFF web (ดู editPageUrl)
 function buildAddedBubble({ label, amount, categoryName, accountName, date, time, entryId }) {
   const isIncome = amount > 0;
   const amountColor = isIncome ? THEME.green : THEME.magenta;
@@ -750,7 +760,7 @@ function buildAddedBubble({ label, amount, categoryName, accountName, date, time
         ...(date ? [infoLine('วันที่', time ? `${date} ${time}` : date)] : []),
       ],
     },
-    ...(entryId && APP_BASE_URL
+    ...(entryId && editPageUrl(entryId)
       ? {
           footer: {
             type: 'box',
@@ -764,7 +774,7 @@ function buildAddedBubble({ label, amount, categoryName, accountName, date, time
                 action: {
                   type: 'uri',
                   label: 'แก้ไขรายการ',
-                  uri: `${APP_BASE_URL}/app/edit/${entryId}`,
+                  uri: editPageUrl(entryId),
                 },
               },
             ],

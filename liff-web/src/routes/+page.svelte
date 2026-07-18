@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
 	import { ensureLiffReady } from '$lib/liff';
 	import BudgetTab from '$lib/components/BudgetTab.svelte';
 	import AccountsTab from '$lib/components/AccountsTab.svelte';
@@ -8,18 +9,23 @@
 	import ReflectTab from '$lib/components/ReflectTab.svelte';
 
 	type Tab = 'budget' | 'accounts' | 'add' | 'transactions' | 'reflect';
+	const tabIds: Tab[] = ['budget', 'accounts', 'add', 'transactions', 'reflect'];
+
+	// เปิดแท็บเริ่มต้นตาม ?tab= ได้ (เช่นหน้าแก้ไขรายการเด้งกลับมาที่ ?tab=transactions)
+	const urlTab = page.url.searchParams.get('tab') as Tab | null;
+	const initialTab: Tab = urlTab && tabIds.includes(urlTab) ? urlTab : 'budget';
 
 	let ready = $state(false);
 	let errorMessage = $state('');
-	let active = $state<Tab>('budget');
+	let active = $state<Tab>(initialTab);
 	// เก็บว่าแท็บไหนเคยเปิดแล้ว — แท็บที่เคยเปิด mount ค้างไว้ (ซ่อนด้วย CSS)
 	// เพื่อคง state ภายใน (scroll, ช่องกรอก) ตอนสลับไปมา และไม่ fetch ซ้ำโดยไม่จำเป็น
 	let visited = $state<Record<Tab, boolean>>({
-		budget: true,
-		accounts: false,
-		add: false,
-		transactions: false,
-		reflect: false
+		budget: initialTab === 'budget',
+		accounts: initialTab === 'accounts',
+		add: initialTab === 'add',
+		transactions: initialTab === 'transactions',
+		reflect: initialTab === 'reflect'
 	});
 
 	const tabs: { id: Tab; label: string }[] = [
