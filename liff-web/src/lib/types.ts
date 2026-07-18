@@ -85,6 +85,31 @@ export interface CashflowResponse {
 	months: CashflowMonth[];
 }
 
+/** รายการที่จดผ่านบอท (หน้าแก้ไข /edit/{id}) — ยอด/หมวด/วันที่มาจาก Actual, เวลา+สลิปมาจาก SQLite ฝั่ง bot */
+export interface TxEntry {
+	id: string;
+	accountId: string;
+	accountName: string | null;
+	amount: number; // สตางค์ มีเครื่องหมาย +/- (ลบ = รายจ่าย)
+	payee: string | null;
+	notes: string | null;
+	categoryId: string | null;
+	date: string; // 'YYYY-MM-DD'
+	time: string | null; // 'HH:MM'
+	hasSlip: boolean;
+}
+
+/** payload บันทึกการแก้ไขรายการ — amount หน่วยบาท มีเครื่องหมาย +/- แล้ว (ฝั่ง bot คูณ 100 เอง) */
+export interface TxEntryUpdate {
+	amount: number;
+	payee?: string;
+	categoryId?: string | null;
+	date: string; // 'YYYY-MM-DD'
+	time: string; // 'HH:MM'
+	slipBase64?: string; // data URL รูปสลิปใหม่ (แทนที่ของเดิม)
+	removeSlip?: boolean;
+}
+
 export interface NewTransaction {
 	accountId: string;
 	amount: number; // หน่วยบาท มีเครื่องหมาย +/- แล้ว (ฝั่ง bot คูณ 100 เอง)

@@ -45,6 +45,18 @@ CREATE TABLE IF NOT EXISTS pending_tx (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- รายการที่จดผ่านบอทสำเร็จแล้ว — เก็บสิ่งที่ Actual ไม่มี field ให้ (เวลาเกิดรายการ, ไฟล์สลิป)
+-- id ใช้เป็นลิงก์หน้าแก้ไขใน LIFF (/app/edit/{id}) และถูกฝังเป็น imported_id ของธุรกรรมใน Actual
+-- (addTransactions ของ @actual-app/api คืนแค่ "ok" เลยต้อง resolve actual_tx_id ทีหลังผ่าน imported_id)
+CREATE TABLE IF NOT EXISTS tx_entries (
+  id TEXT PRIMARY KEY,
+  actual_tx_id TEXT,
+  account_id TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,   -- 'YYYY-MM-DD HH:MM' เวลาไทย (Actual เก็บได้แค่วันที่ เวลาอยู่ฝั่งเรา)
+  slip_path TEXT,              -- ไฟล์สลิป/หลักฐานบนดิสก์ (ไม่บังคับ)
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- สถานะการนำเข้า statement PDF แบบหลายขั้นตอน (เลือกธนาคาร → ถอด statement → เลือกบัญชี → ยืนยัน)
 -- LINE ไม่มี session ในตัว เลยเก็บ state ต่อการนำเข้าไว้ที่นี่ อ้างถึงด้วย token สั้นๆ ใน postback
 -- transactions = JSON รายการที่ AI ถอดได้ (เก็บหลังเลือกธนาคาร), file_path = PDF ต้นฉบับบนดิสก์

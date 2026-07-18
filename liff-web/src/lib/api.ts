@@ -6,7 +6,9 @@ import type {
 	CategoriesResponse,
 	NewTransaction,
 	ReflectResponse,
-	TransactionsResponse
+	TransactionsResponse,
+	TxEntry,
+	TxEntryUpdate
 } from './types';
 
 export class UnauthorizedError extends Error {
@@ -82,4 +84,25 @@ export function getReflect(months = 6): Promise<ReflectResponse> {
 /** หนี้บัตรรวม ณ สิ้นเดือนย้อนหลัง N เดือน (ฝั่ง bot จำกัดสูงสุด 24) */
 export function getCashflow(months = 6): Promise<CashflowResponse> {
 	return apiFetch<CashflowResponse>(`/api/cashflow?months=${months}`);
+}
+
+/** รายการเดียวสำหรับหน้าแก้ไข /edit/{id} (id = tx_entries.id ฝั่ง bot) */
+export function getTxEntry(id: string): Promise<TxEntry> {
+	return apiFetch<TxEntry>(`/api/tx/${id}`);
+}
+
+export function updateTxEntry(id: string, body: TxEntryUpdate): Promise<void> {
+	return apiFetch<void>(`/api/tx/${id}`, { method: 'PUT', body });
+}
+
+export function deleteTxEntry(id: string): Promise<void> {
+	return apiFetch<void>(`/api/tx/${id}`, { method: 'DELETE' });
+}
+
+/** รูปสลิปหลักฐาน — ต้อง fetch เองเพราะ <img> ใส่ Authorization header ไม่ได้ คืน object URL (หรือ null ถ้าไม่มี) */
+export async function getTxSlipUrl(id: string): Promise<string | null> {
+	const res = await fetch(`/api/tx/${id}/slip`, { headers: getAuthHeaders() });
+	if (res.status === 401 || res.status === 403) throw new UnauthorizedError();
+	if (!res.ok) return null;
+	return URL.createObjectURL(await res.blob());
 }

@@ -13,6 +13,7 @@ const { extractSlip } = require('./slipExtract');
 const { renderPdfToImages } = require('./pdf');
 const { extractStatement } = require('./statementExtract');
 const { extractPayee } = require('./payee');
+const { bangkokNow } = require('./time');
 
 // ธนาคารให้เลือกตอนนำเข้า statement PDF — key ใช้จับคู่รหัสผ่านใน PDF_PASSWORDS และเป็น hint ให้ AI
 const BANKS = [
@@ -40,6 +41,16 @@ try {
 // โฟลเดอร์เก็บ PDF ต้นฉบับระหว่างรอผู้ใช้เลือกธนาคาร/บัญชี (ลบทิ้งเมื่อยืนยัน/ยกเลิก/หมดอายุ)
 const IMPORT_DIR = path.join(__dirname, '..', 'data', 'imports');
 fs.mkdirSync(IMPORT_DIR, { recursive: true });
+
+// โฟลเดอร์เก็บรูปสลิปเป็นหลักฐานของรายการที่จด — tmp-{token}.jpg ระหว่างรอเลือกบัญชี
+// แล้วเปลี่ยนชื่อเป็น {entryId}.jpg เมื่อบันทึกสำเร็จ (ดู handleAddTx)
+const SLIP_DIR = path.join(__dirname, '..', 'data', 'slips');
+fs.mkdirSync(SLIP_DIR, { recursive: true });
+
+// ลิงก์หน้าแก้ไขรายการใน LIFF web — ปุ่ม "แก้ไข" บนการ์ดจดสำเร็จ
+// LINE บังคับ uri action เป็น https เท่านั้น ถ้าไม่ได้ตั้ง DOMAIN ไว้จะไม่แสดงปุ่ม
+const APP_BASE_URL =
+  process.env.APP_BASE_URL || (process.env.DOMAIN ? `https://${process.env.DOMAIN}` : null);
 
 // ภาพจิยุมุมหัวการ์ด "นำเข้าสำเร็จ" ให้เข้าชุดกับการ์ดจดรายการเดี่ยว — ตั้ง URL รูป (https) ใน .env
 // ถ้าไม่ตั้งไว้ก็ยังทำงานได้ แค่ไม่มีรูป (ต้องเป็น URL สาธารณะ https เท่านั้นตามข้อกำหนด Flex image)
@@ -131,7 +142,7 @@ async function handleText(event) {
 // เสนอบัญชีให้เลือกเป็น Flex Message (สวย + รองรับชื่อยาว) แล้วผูก postback บันทึกธุรกรรมเมื่อกด
 // ใช้ร่วมกันทั้งข้อความพิมพ์เองและสลิป — payload เต็ม (amount/label/category/ref/source/date)
 // เก็บใน pending_tx ที่ DB แล้วใส่แค่ token สั้นๆ ใน postback (กันชน limit 300 ตัวอักษร)
-async function offerAccountChoice(event, { label, amount, ref, source, date }) {
+async function offerAccountChoice(event, { label, amount, ref, source, date, slipBuffer }) {
   const accounts = (await actual.getAccounts()).filter((a) => !a.closed);
   if (accounts.length === 0) {
     return reply(event.replyToken, 'ยังไม่มีบัญชีใน Actual Budget ให้เลือก');
@@ -149,6 +160,14 @@ async function offerAccountChoice(event, { label, amount, ref, source, date }) {
 
   // เก็บรายการค้างไว้ที่ DB คืนแค่ token — postback แต่ละปุ่มเลยเหลือแค่ token + accountId
   const token = crypto.randomBytes(9).toString('hex');
+
+  // มีรูปสลิปแนบมาด้วย (จดจากสลิป/QR) → พักไฟล์ไว้ก่อน ระหว่างรอผู้ใช้เลือกบัญชี
+  let slipTmp = null;
+  if (slipBuffer) {
+    slipTmp = path.join(SLIP_DIR, `tmp-${token}.jpg`);
+    fs.writeFileSync(slipTmp, slipBuffer);
+  }
+
   db.prepare(`INSERT INTO pending_tx (token, payload) VALUES (?, ?)`).run(
     token,
     JSON.stringify({
@@ -159,10 +178,10 @@ async function offerAccountChoice(event, { label, amount, ref, source, date }) {
       ref,
       source,
       date,
+      slipTmp,
     })
   );
-  // เก็บกวาดรายการค้างเก่าเกิน 1 วัน (ผู้ใช้กดค้างแล้วเลิก) กัน DB บวม
-  db.prepare(`DELETE FROM pending_tx WHERE created_at < datetime('now', '-1 day')`).run();
+  sweepStalePendingTx(); // เก็บกวาดรายการค้างเก่าเกิน 1 วัน (ผู้ใช้กดค้างแล้วเลิก) กัน DB/ดิสก์บวม
 
   return client.replyMessage({
     replyToken: event.replyToken,
@@ -259,15 +278,31 @@ async function handleAddTx(event, data) {
   if (!row) {
     return reply(event.replyToken, 'รายการนี้หมดอายุหรือถูกบันทึกไปแล้ว ลองส่งใหม่อีกครั้งค่ะ');
   }
-  const { amount, label, categoryId, categoryName, ref, source, date } = JSON.parse(row.payload);
+  const { amount, label, categoryId, categoryName, ref, source, date, slipTmp } = JSON.parse(
+    row.payload
+  );
 
   if (ref && db.prepare(`SELECT 1 FROM transaction_refs WHERE ref = ?`).get(ref)) {
     db.prepare(`DELETE FROM pending_tx WHERE token = ?`).run(token);
+    if (slipTmp) fs.rmSync(slipTmp, { force: true });
     return reply(event.replyToken, 'รายการนี้บันทึกไปแล้ว ข้ามให้ไม่ซ้ำนะคะ');
   }
 
+  // entryId = id ของรายการฝั่งเรา (ตาราง tx_entries) ใช้ทั้งเป็นลิงก์หน้าแก้ไข /app/edit/{id}
+  // และฝังเป็น imported_id ใน Actual เพื่อ resolve หา id ธุรกรรมจริงทีหลัง
+  const entryId = crypto.randomBytes(9).toString('hex');
+  const now = bangkokNow();
+  const txDate = date || now.date;
+
   try {
-    await actual.addTransaction({ accountId, amount, payee: label, category: categoryId, date });
+    await actual.addTransaction({
+      accountId,
+      amount,
+      payee: label,
+      category: categoryId,
+      date: txDate,
+      importedId: entryId,
+    });
   } catch (err) {
     console.error('handlePostback addTransaction error:', err);
     return reply(event.replyToken, 'บันทึกรายการไม่สำเร็จ ลองใหม่อีกครั้งค่ะ');
@@ -280,6 +315,23 @@ async function handleAddTx(event, data) {
   }
   db.prepare(`DELETE FROM pending_tx WHERE token = ?`).run(token); // ใช้ครั้งเดียว กดซ้ำจะไม่บันทึกซ้ำ
 
+  // ย้ายสลิปจากไฟล์พักมาเก็บถาวรใต้ชื่อ entryId (ถ้ามีสลิปแนบมากับรายการนี้)
+  let slipPath = null;
+  if (slipTmp && fs.existsSync(slipTmp)) {
+    slipPath = path.join(SLIP_DIR, `${entryId}.jpg`);
+    fs.renameSync(slipTmp, slipPath);
+  }
+
+  // resolve id ธุรกรรมฝั่ง Actual จาก imported_id — ถ้ายังหาไม่เจอ (sync ช้า) เก็บ null ไว้
+  // แล้วค่อย resolve ใหม่ตอนเปิดหน้าแก้ไข (bot/src/routes/api.js)
+  const actualTx = await actual
+    .findTransactionByImportedId(accountId, entryId)
+    .catch((err) => (console.error('resolve actual tx id error:', err), null));
+
+  db.prepare(
+    `INSERT INTO tx_entries (id, actual_tx_id, account_id, occurred_at, slip_path) VALUES (?, ?, ?, ?, ?)`
+  ).run(entryId, actualTx?.id || null, accountId, `${txDate} ${now.time}`, slipPath);
+
   const accountName =
     (await actual.getAccounts()).find((a) => a.id === accountId)?.name || accountId;
   return client.replyMessage({
@@ -288,7 +340,15 @@ async function handleAddTx(event, data) {
       {
         type: 'flex',
         altText: `จดแล้ว: ${label} ${amount} บาท`,
-        contents: buildAddedBubble({ label, amount, categoryName, accountName, date }),
+        contents: buildAddedBubble({
+          label,
+          amount,
+          categoryName,
+          accountName,
+          date: txDate,
+          time: now.time,
+          entryId,
+        }),
       },
     ],
   });
@@ -327,6 +387,7 @@ async function handleImage(event) {
         amount: -Math.abs(qr.amount),
         ref: qr.ref,
         source: 'qr',
+        slipBuffer: buffer, // เก็บรูปที่ส่งมาเป็นหลักฐานของรายการ (ดูได้จากหน้าแก้ไข)
       });
     }
   }
@@ -356,6 +417,7 @@ async function handleImage(event) {
     ref: slip.ref || undefined,
     source: 'slip',
     date: slip.date || undefined,
+    slipBuffer: buffer, // เก็บรูปสลิปเป็นหลักฐานของรายการ (ดูได้จากหน้าแก้ไข)
   });
 }
 
@@ -643,7 +705,8 @@ function buildImportDoneBubble(txs, accountName) {
 }
 
 // Flex: การ์ด "จดสำเร็จ" ของการเพิ่มรายการเดี่ยว (พิมพ์ข้อความ/สลิป/QR) — ธีมจิยุเดียวกับการ์ดนำเข้า
-function buildAddedBubble({ label, amount, categoryName, accountName, date }) {
+// entryId (ถ้ามี) → มีปุ่ม "แก้ไขรายการ" เปิดหน้าแก้ไขใน LIFF web ({APP_BASE_URL}/app/edit/{id})
+function buildAddedBubble({ label, amount, categoryName, accountName, date, time, entryId }) {
   const isIncome = amount > 0;
   const amountColor = isIncome ? THEME.green : THEME.magenta;
 
@@ -684,9 +747,30 @@ function buildAddedBubble({ label, amount, categoryName, accountName, date }) {
         { type: 'separator' },
         ...(categoryName ? [infoLine('หมวดหมู่', categoryName)] : []),
         infoLine('บัญชี', accountName),
-        ...(date ? [infoLine('วันที่', date)] : []),
+        ...(date ? [infoLine('วันที่', time ? `${date} ${time}` : date)] : []),
       ],
     },
+    ...(entryId && APP_BASE_URL
+      ? {
+          footer: {
+            type: 'box',
+            layout: 'vertical',
+            contents: [
+              {
+                type: 'button',
+                style: 'primary',
+                height: 'sm',
+                color: THEME.magenta,
+                action: {
+                  type: 'uri',
+                  label: 'แก้ไขรายการ',
+                  uri: `${APP_BASE_URL}/app/edit/${entryId}`,
+                },
+              },
+            ],
+          },
+        }
+      : {}),
   };
 }
 
@@ -923,6 +1007,23 @@ function buildImportPreviewCarousel(token, transactions) {
 function cleanupImport(row) {
   if (row.file_path) fs.rmSync(row.file_path, { force: true });
   db.prepare(`DELETE FROM pending_import WHERE token = ?`).run(row.token);
+}
+
+// เก็บกวาดรายการจดค้างเกิน 1 วัน (ผู้ใช้ได้การ์ดเลือกบัญชีแล้วไม่กดต่อ)
+// ต้อง select ก่อน delete เพื่อลบไฟล์สลิปพัก (tmp-*.jpg) ที่ผูกกับรายการค้างด้วย
+function sweepStalePendingTx() {
+  const stale = db
+    .prepare(`SELECT token, payload FROM pending_tx WHERE created_at < datetime('now', '-1 day')`)
+    .all();
+  for (const row of stale) {
+    try {
+      const { slipTmp } = JSON.parse(row.payload);
+      if (slipTmp) fs.rmSync(slipTmp, { force: true });
+    } catch (err) {
+      console.error('sweepStalePendingTx parse error:', err);
+    }
+    db.prepare(`DELETE FROM pending_tx WHERE token = ?`).run(row.token);
+  }
 }
 
 // เก็บกวาดรายการนำเข้าค้างเกิน 1 วัน (ผู้ใช้ส่งไฟล์แล้วไม่ทำต่อ) พร้อมลบไฟล์ PDF ที่ค้างบนดิสก์

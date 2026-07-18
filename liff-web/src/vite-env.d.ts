@@ -15,6 +15,8 @@ interface LiffGlobal {
 	isLoggedIn(): boolean;
 	login(config?: { redirectUri?: string }): void;
 	getIDToken(): string | null;
+	isInClient(): boolean;
+	closeWindow(): void;
 }
 
 declare global {

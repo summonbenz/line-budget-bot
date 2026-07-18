@@ -18,7 +18,9 @@ async function init() {
   ready = true;
 }
 
-async function addTransaction({ accountId, amount, payee, category, date, notes }) {
+// importedId (ไม่บังคับ): ฝังเป็น imported_id ของธุรกรรม ใช้ resolve หา id จริงทีหลัง
+// เพราะ addTransactions ของ @actual-app/api คืนแค่ "ok" ไม่คืน id ของรายการที่สร้าง
+async function addTransaction({ accountId, amount, payee, category, date, notes, importedId }) {
   await init();
   return actualApi.addTransactions(accountId, [
     {
@@ -27,6 +29,7 @@ async function addTransaction({ accountId, amount, payee, category, date, notes 
       payee_name: payee,
       category,
       notes,
+      imported_id: importedId,
     },
   ]);
 }
@@ -90,6 +93,52 @@ async function getAccountBalance(accountId, asOfDate) {
   return transactions.reduce((sum, t) => sum + t.amount, 0);
 }
 
+// ช่วงวันที่กว้างสุดสำหรับค้นธุรกรรมทั้งบัญชี — getTransactions ปกติ default until = วันนี้
+// ซึ่งจะมองไม่เห็นรายการที่ลงวันที่อนาคต เลยใช้ขอบบนไกลๆ แทน
+const ALL_SINCE = '2000-01-01';
+const ALL_UNTIL = '2100-01-01';
+
+// หาธุรกรรมจาก imported_id ที่เราฝังไว้ตอน addTransaction (ดูคอมเมนต์บน addTransaction)
+async function findTransactionByImportedId(accountId, importedId) {
+  await init();
+  const txs = await actualApi.getTransactions(accountId, ALL_SINCE, ALL_UNTIL);
+  return txs.find((t) => t.imported_id === importedId) || null;
+}
+
+// หาธุรกรรมจาก id ตรงๆ — @actual-app/api ไม่มี get-by-id เลยดึงทั้งบัญชีแล้วกรองเอง
+// (single-user รายการไม่เยอะ รับได้)
+async function getTransactionById(accountId, txId) {
+  await init();
+  const txs = await actualApi.getTransactions(accountId, ALL_SINCE, ALL_UNTIL);
+  return txs.find((t) => t.id === txId) || null;
+}
+
+async function updateTransaction(id, fields) {
+  await init();
+  return actualApi.updateTransaction(id, fields);
+}
+
+async function deleteTransaction(id) {
+  await init();
+  return actualApi.deleteTransaction(id);
+}
+
+async function getPayees() {
+  await init();
+  return actualApi.getPayees();
+}
+
+// updateTransaction รับแค่ payee เป็น id (ไม่รับ payee_name แบบตอน add)
+// เลยต้องหา payee เดิมจากชื่อก่อน ถ้าไม่มีค่อยสร้างใหม่ — คืน payee id
+async function findOrCreatePayee(name) {
+  await init();
+  const wanted = name.trim();
+  const payees = await actualApi.getPayees();
+  const found = payees.find((p) => (p.name || '').trim().toLowerCase() === wanted.toLowerCase());
+  if (found) return found.id;
+  return actualApi.createPayee({ name: wanted });
+}
+
 module.exports = {
   init,
   addTransaction,
@@ -100,4 +149,10 @@ module.exports = {
   setBudgetAmount,
   getTransactions,
   getAccountBalance,
+  findTransactionByImportedId,
+  getTransactionById,
+  getPayees,
+  updateTransaction,
+  deleteTransaction,
+  findOrCreatePayee,
 };

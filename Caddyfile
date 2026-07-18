@@ -12,9 +12,11 @@
 	}
 
 	# LIFF web dashboard - static site, เปิดจากในแอป Line ผ่าน liff.line.me/{liffId}
+	# try_files: เส้นทางที่ไม่ใช่ไฟล์จริง (เช่น /app/edit/{id}) ให้ตกไป index.html แบบ SPA
 	handle /app/* {
 		uri strip_prefix /app
 		root * /srv/liff-web
+		try_files {path} /index.html
 		file_server
 	}
 

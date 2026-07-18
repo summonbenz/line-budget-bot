@@ -35,6 +35,15 @@ async function initLiff(): Promise<void> {
 	}
 }
 
+/** ปิดหน้าต่าง LIFF (ใช้หลังบันทึก/ลบจากหน้าแก้ไข) — คืน false ถ้าไม่ได้เปิดในแอป LINE ให้ผู้เรียก fallback เอง */
+export function closeLiffWindow(): boolean {
+	if (!devNoAuth && window.liff?.isInClient?.()) {
+		window.liff.closeWindow();
+		return true;
+	}
+	return false;
+}
+
 export function getAuthHeaders(): HeadersInit {
 	if (devNoAuth) {
 		return {};

@@ -1,13 +1,19 @@
 // API สำหรับ LIFF dashboard เท่านั้น — ทุก route ผ่าน verifyLiffUser ก่อนเสมอ
 
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
 const actual = require('../actualClient');
 const db = require('../db');
 const { verifyLiffUser } = require('../auth');
 
+// โฟลเดอร์รูปสลิปหลักฐาน (เดียวกับ SLIP_DIR ใน src/index.js)
+const SLIP_DIR = path.join(__dirname, '..', '..', 'data', 'slips');
+
 const router = express.Router();
 // json parser ใส่เฉพาะ router นี้ (mount ที่ /api) — ห้ามใส่ global เพราะ /webhook ต้องอ่าน raw body
-router.use(express.json());
+// limit 8mb เผื่อรูปสลิปที่หน้าแก้ไขส่งมาเป็น base64 ใน body (PUT /tx/:id)
+router.use(express.json({ limit: '8mb' }));
 router.use(verifyLiffUser);
 
 function getCardAccountIds() {
@@ -319,6 +325,161 @@ router.get('/cashflow', async (req, res) => {
   } catch (err) {
     console.error('GET /api/cashflow error:', err);
     res.status(500).json({ error: 'failed to load cashflow' });
+  }
+});
+
+// ---------- แก้ไขรายการที่จดผ่านบอท (ตาราง tx_entries + ธุรกรรมใน Actual) ----------
+
+// หา "ธุรกรรมฝั่ง Actual" ของ entry — ปกติ actual_tx_id ถูก resolve ไว้แล้วตอนจด
+// แต่บางแถวอาจเป็น null (resolve ไม่ทัน) เลย fallback ไปหาใหม่จาก imported_id แล้ว cache กลับลง DB
+async function resolveActualTx(row) {
+  if (row.actual_tx_id) {
+    const tx = await actual.getTransactionById(row.account_id, row.actual_tx_id);
+    if (tx) return tx;
+  }
+  const tx = await actual.findTransactionByImportedId(row.account_id, row.id);
+  if (tx && tx.id !== row.actual_tx_id) {
+    db.prepare(`UPDATE tx_entries SET actual_tx_id = ? WHERE id = ?`).run(tx.id, row.id);
+  }
+  return tx;
+}
+
+// ข้อมูลรายการเดียวสำหรับหน้าแก้ไข /app/edit/{id} — ยอด/หมวด/วันที่ยึดจาก Actual เป็นหลัก
+// (เผื่อผู้ใช้ไปแก้จากหน้าเว็บ Actual เอง) ส่วนเวลา + สลิปอยู่ฝั่ง SQLite
+router.get('/tx/:id', async (req, res) => {
+  try {
+    const row = db.prepare(`SELECT * FROM tx_entries WHERE id = ?`).get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'entry not found' });
+
+    const tx = await resolveActualTx(row);
+    if (!tx) return res.status(404).json({ error: 'transaction not found in actual' });
+
+    const accounts = await actual.getAccounts();
+    const timePart = (row.occurred_at || '').split(' ')[1] || null;
+
+    // getTransactions คืน payee เป็น id — ต้องแปลงเป็นชื่อเอง (imported_payee เป็นชื่อดิบตอนสร้าง
+    // ใช้เป็น fallback เท่านั้น เพราะไม่อัปเดตตามเมื่อผู้ใช้แก้ชื่อรายละเอียดทีหลัง)
+    let payeeName = null;
+    if (tx.payee) {
+      const payees = await actual.getPayees();
+      payeeName = payees.find((p) => p.id === tx.payee)?.name || null;
+    }
+
+    res.json({
+      id: row.id,
+      accountId: row.account_id,
+      accountName: accounts.find((a) => a.id === row.account_id)?.name || null,
+      amount: tx.amount, // สตางค์ มีเครื่องหมาย +/- ตามที่ Actual เก็บ
+      payee: payeeName || tx.imported_payee || null,
+      notes: tx.notes || null,
+      categoryId: tx.category || null,
+      date: tx.date, // 'YYYY-MM-DD'
+      time: timePart, // 'HH:MM' — เก็บฝั่งเรา (Actual ไม่มี field เวลา)
+      hasSlip: !!(row.slip_path && fs.existsSync(row.slip_path)),
+    });
+  } catch (err) {
+    console.error('GET /api/tx/:id error:', err);
+    res.status(500).json({ error: 'failed to load transaction' });
+  }
+});
+
+// บันทึกการแก้ไข — ยอด/รายละเอียด/หมวด/วันที่ อัปเดตเข้า Actual, เวลา + สลิปอัปเดตฝั่ง SQLite
+// amount หน่วยบาท มีเครื่องหมาย +/- แล้ว (เหมือน POST /transactions), slipBase64 = data URL รูปสลิปใหม่
+router.put('/tx/:id', async (req, res) => {
+  try {
+    const row = db.prepare(`SELECT * FROM tx_entries WHERE id = ?`).get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'entry not found' });
+
+    const { amount, payee, categoryId, date, time, slipBase64, removeSlip } = req.body || {};
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) {
+      return res.status(400).json({ error: 'non-zero amount required' });
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date || '')) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    }
+    if (!/^\d{2}:\d{2}$/.test(time || '')) {
+      return res.status(400).json({ error: 'time must be HH:MM' });
+    }
+
+    // ตรวจรูปสลิปก่อนแตะอะไรทั้งนั้น — จะได้ไม่อัปเดต Actual ไปแล้วค่อยพังกลางทาง
+    let slipBuffer = null;
+    let slipExt = null;
+    if (slipBase64) {
+      const m = /^data:image\/(png|jpe?g|webp);base64,([A-Za-z0-9+/=]+)$/.exec(slipBase64);
+      if (!m) return res.status(400).json({ error: 'slipBase64 must be an image data URL' });
+      slipExt = m[1] === 'png' ? 'png' : m[1] === 'webp' ? 'webp' : 'jpg';
+      slipBuffer = Buffer.from(m[2], 'base64');
+    }
+
+    const tx = await resolveActualTx(row);
+    if (!tx) return res.status(404).json({ error: 'transaction not found in actual' });
+
+    const fields = {
+      amount: Math.round(amount * 100), // Actual เก็บหน่วยสตางค์
+      date,
+      category: categoryId || null,
+    };
+    // เปลี่ยนชื่อรายละเอียด/ผู้รับเงิน — updateTransaction รับแค่ payee id เลยหา/สร้าง payee จากชื่อก่อน
+    if (typeof payee === 'string' && payee.trim()) {
+      fields.payee = await actual.findOrCreatePayee(payee);
+    }
+    await actual.updateTransaction(tx.id, fields);
+
+    // เวลา + สลิป เก็บฝั่งเรา
+    let slipPath = row.slip_path;
+    if (removeSlip && slipPath) {
+      fs.rmSync(slipPath, { force: true });
+      slipPath = null;
+    }
+    if (slipBuffer) {
+      if (slipPath) fs.rmSync(slipPath, { force: true }); // รูปเดิมอาจคนละนามสกุล ลบทิ้งก่อน
+      fs.mkdirSync(SLIP_DIR, { recursive: true });
+      slipPath = path.join(SLIP_DIR, `${row.id}.${slipExt}`);
+      fs.writeFileSync(slipPath, slipBuffer);
+    }
+    db.prepare(`UPDATE tx_entries SET occurred_at = ?, slip_path = ? WHERE id = ?`).run(
+      `${date} ${time}`,
+      slipPath,
+      row.id
+    );
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('PUT /api/tx/:id error:', err);
+    res.status(500).json({ error: 'failed to update transaction' });
+  }
+});
+
+// ลบรายการ — ลบทั้งธุรกรรมใน Actual (ถ้ายังอยู่) ไฟล์สลิป และแถว tx_entries
+router.delete('/tx/:id', async (req, res) => {
+  try {
+    const row = db.prepare(`SELECT * FROM tx_entries WHERE id = ?`).get(req.params.id);
+    if (!row) return res.status(404).json({ error: 'entry not found' });
+
+    const tx = await resolveActualTx(row);
+    if (tx) await actual.deleteTransaction(tx.id);
+
+    if (row.slip_path) fs.rmSync(row.slip_path, { force: true });
+    db.prepare(`DELETE FROM tx_entries WHERE id = ?`).run(row.id);
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('DELETE /api/tx/:id error:', err);
+    res.status(500).json({ error: 'failed to delete transaction' });
+  }
+});
+
+// รูปสลิปหลักฐานของรายการ — ผ่าน auth ของ router อยู่แล้ว ฝั่งเว็บ fetch เป็น blob (ใส่ header เองไม่ได้ใน <img>)
+router.get('/tx/:id/slip', (req, res) => {
+  try {
+    const row = db.prepare(`SELECT slip_path FROM tx_entries WHERE id = ?`).get(req.params.id);
+    if (!row?.slip_path || !fs.existsSync(row.slip_path)) {
+      return res.status(404).json({ error: 'no slip' });
+    }
+    res.sendFile(path.resolve(row.slip_path));
+  } catch (err) {
+    console.error('GET /api/tx/:id/slip error:', err);
+    res.status(500).json({ error: 'failed to load slip' });
   }
 });
 

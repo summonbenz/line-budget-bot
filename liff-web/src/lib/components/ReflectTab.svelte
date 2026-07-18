@@ -1,7 +1,14 @@
 <script lang="ts">
 	import { getAccounts, getBudget, getCashflow, getReflect, UnauthorizedError } from '$lib/api';
 	import { appState } from '$lib/store.svelte';
-	import { baht, bahtWhole, currentMonth, shiftMonth, thaiMonth, thaiMonthShort } from '$lib/format';
+	import {
+		baht,
+		bahtWhole,
+		currentMonth,
+		shiftMonth,
+		thaiMonth,
+		thaiMonthShort
+	} from '$lib/format';
 	import type { CashflowMonth, ReflectMonth } from '$lib/types';
 
 	let { active }: { active: boolean } = $props();
@@ -29,9 +36,7 @@
 				getBudget(currentMonth())
 			]);
 			months = reflectRes.months;
-			netWorth = accRes.accounts
-				.filter((a) => !a.offBudget)
-				.reduce((sum, a) => sum + a.balance, 0);
+			netWorth = accRes.accounts.filter((a) => !a.offBudget).reduce((sum, a) => sum + a.balance, 0);
 
 			// รายจ่ายรายหมวดของเดือนนี้ เรียงมาก→น้อย เกิน 7 หมวดพับเป็น "อื่นๆ"
 			const cats = budgetRes.groups
@@ -401,7 +406,8 @@
 			>
 				{#each DEBT_PERIODS as p (p.months)}
 					<button
-						class="flex-1 rounded-md px-2 py-1 text-[11px] transition-colors {debtPeriod === p.months
+						class="flex-1 rounded-md px-2 py-1 text-[11px] transition-colors {debtPeriod ===
+						p.months
 							? 'bg-white font-semibold text-stone-800 shadow-sm'
 							: 'text-stone-500'}"
 						onclick={() => (debtPeriod = p.months)}
